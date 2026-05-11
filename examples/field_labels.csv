@@ -1,0 +1,2 @@
+timestamp,label,confidence,latitude,longitude,speed_kmh,notes
+2026-05-11T17:03:27+01:00,visible_vehicle,high,,,,example label aligned with RF logs
