@@ -5,6 +5,8 @@ __pycache__/
 venv/
 env/
 logs/
+build/
+features*.csv
 *.log
 .pytest_cache/
 .mypy_cache/
