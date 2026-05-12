@@ -17,6 +17,7 @@ import time
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,6 +113,11 @@ def parse_args() -> argparse.Namespace:
         help="CSV file for strongest readings each scan row. Default: logs/rf_readings.csv",
     )
     parser.add_argument(
+        "--observations-log",
+        default=None,
+        help="CSV file for manual field markers. Default: logs/rf_observations.csv",
+    )
+    parser.add_argument(
         "--log-top",
         type=int,
         default=5,
@@ -169,6 +175,7 @@ def apply_preset_defaults(args: argparse.Namespace) -> argparse.Namespace:
             "incident_min_power_db": -20.0,
             "activity_log": "logs/rf_base_activity.csv",
             "readings_log": "logs/rf_base_readings.csv",
+            "observations_log": "logs/rf_base_observations.csv",
             "absolute_strong_db": -10.0,
             "absolute_extreme_db": -5.0,
         },
@@ -180,6 +187,7 @@ def apply_preset_defaults(args: argparse.Namespace) -> argparse.Namespace:
             "incident_min_power_db": -25.0,
             "activity_log": "logs/rf_mobile_activity.csv",
             "readings_log": "logs/rf_mobile_readings.csv",
+            "observations_log": "logs/rf_mobile_observations.csv",
             "absolute_strong_db": -18.0,
             "absolute_extreme_db": -12.0,
         },
@@ -192,6 +200,7 @@ def apply_preset_defaults(args: argparse.Namespace) -> argparse.Namespace:
         "incident_min_power_db": -20.0,
         "activity_log": "logs/rf_activity.csv",
         "readings_log": "logs/rf_readings.csv",
+        "observations_log": "logs/rf_observations.csv",
         "absolute_strong_db": -10.0,
         "absolute_extreme_db": -5.0,
     }
@@ -267,6 +276,8 @@ class DashboardState:
             "strongest": [],
             "active_incidents": [],
             "recent_events": [],
+            "recent_observations": [],
+            "series": [],
             "threshold_db": 0,
             "range": "",
         }
@@ -301,11 +312,11 @@ def dashboard_html() -> bytes:
       background: #090909;
       transition: background 200ms linear;
     }
-    body.normal { background: #0b1713; }
-    body.elevated { background: #2b2208; }
-    body.strong { background: #3a1108; }
+    body.normal { background: #071511; }
+    body.elevated { background: #242006; }
+    body.strong { background: #331208; }
     body.extreme {
-      background: #7a0707;
+      background: #780606;
       animation: pulse 900ms infinite alternate;
     }
     @keyframes pulse {
@@ -316,7 +327,7 @@ def dashboard_html() -> bytes:
       min-height: 100vh;
       display: grid;
       grid-template-rows: auto 1fr auto;
-      gap: 18px;
+      gap: 14px;
       padding: 22px;
     }
     header, footer {
@@ -329,35 +340,62 @@ def dashboard_html() -> bytes:
     }
     .hero {
       display: grid;
-      align-content: center;
-      justify-items: center;
-      text-align: center;
+      align-content: start;
+      gap: 16px;
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
       gap: 14px;
+      align-items: stretch;
+    }
+    .primary {
+      text-align: center;
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      min-height: 320px;
     }
     .status {
-      font-size: clamp(42px, 13vw, 150px);
-      line-height: .92;
+      font-size: clamp(34px, 8vw, 104px);
+      line-height: .96;
       font-weight: 850;
       letter-spacing: 0;
       text-transform: uppercase;
     }
-    .delta {
-      font-size: clamp(56px, 18vw, 220px);
+    .power-main {
+      font-size: clamp(64px, 15vw, 180px);
       line-height: .9;
       font-weight: 900;
       letter-spacing: 0;
       font-variant-numeric: tabular-nums;
     }
+    .subline {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 18px;
+      color: rgba(255,255,255,.78);
+      font-size: clamp(20px, 3vw, 36px);
+      font-weight: 720;
+      font-variant-numeric: tabular-nums;
+    }
     .freq {
-      font-size: clamp(26px, 6vw, 76px);
+      font-size: clamp(24px, 4.8vw, 58px);
       font-weight: 750;
       font-variant-numeric: tabular-nums;
+    }
+    .side {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 12px;
     }
     .details {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 12px;
-      width: min(1100px, 100%);
     }
     .metric {
       border: 1px solid rgba(255,255,255,.18);
@@ -377,13 +415,70 @@ def dashboard_html() -> bytes:
       font-variant-numeric: tabular-nums;
       overflow-wrap: anywhere;
     }
+    .peak .value {
+      font-size: clamp(28px, 4vw, 56px);
+    }
+    .muted-line {
+      color: rgba(255,255,255,.62);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-wrap {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(255,255,255,.68);
+      font-size: clamp(13px, 1.8vw, 18px);
+      margin-bottom: 8px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 250px;
+    }
+    .marker-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .mark-button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 8px;
+      background: rgba(255,255,255,.08);
+      color: #f6f2e8;
+      min-height: 64px;
+      font-size: clamp(18px, 2.4vw, 28px);
+      font-weight: 800;
+      font-family: inherit;
+    }
+    .mark-button:active {
+      transform: translateY(1px);
+      background: rgba(255,255,255,.18);
+    }
+    .marker-status {
+      color: rgba(255,255,255,.68);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 650;
+      min-height: 24px;
+    }
     footer {
       font-variant-numeric: tabular-nums;
     }
     @media (max-width: 700px) {
       main { padding: 14px; gap: 12px; }
       header, footer { align-items: flex-start; flex-direction: column; }
+      .summary { grid-template-columns: 1fr; }
+      .primary { min-height: 220px; }
       .details { grid-template-columns: 1fr; }
+      .marker-row { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -394,23 +489,55 @@ def dashboard_html() -> bytes:
       <div id="updated">waiting</div>
     </header>
     <section class="hero">
-      <div id="status" class="status">warming</div>
-      <div id="delta" class="delta">+0.0 dB</div>
-      <div id="freq" class="freq">---</div>
-      <div class="details">
-        <div class="metric">
-          <div class="label">Power</div>
-          <div id="power" class="value">---</div>
+      <div class="summary">
+        <div class="primary">
+          <div id="status" class="status">warming</div>
+          <div id="power-main" class="power-main">---</div>
+          <div class="subline">
+            <span id="delta">+0.0 dB above baseline</span>
+            <span id="freq">---</span>
+          </div>
         </div>
+        <div class="side">
+          <div class="metric peak">
+            <div class="label">Recent peak</div>
+            <div id="peak-power" class="value">---</div>
+            <div id="peak-meta" class="muted-line">no peak yet</div>
+          </div>
+          <div class="metric">
+            <div class="label">Mode</div>
+            <div id="mode" class="value">mobile</div>
+            <div id="mode-meta" class="muted-line">380-385 MHz</div>
+          </div>
+        </div>
+      </div>
+      <div class="details">
         <div class="metric">
           <div class="label">Baseline</div>
           <div id="baseline" class="value">---</div>
         </div>
         <div class="metric">
-          <div class="label">Active incidents</div>
+          <div class="label">Delta</div>
+          <div id="delta-card" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Active clusters</div>
           <div id="incidents" class="value">0</div>
         </div>
       </div>
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <div>Signal over time</div>
+          <div id="chart-meta">power / baseline</div>
+        </div>
+        <canvas id="chart" width="1100" height="260"></canvas>
+      </div>
+      <div class="marker-row">
+        <button class="mark-button" data-label="visible_vehicle">Vehicle visible</button>
+        <button class="mark-button" data-label="passed_close">Passed close</button>
+        <button class="mark-button" data-label="uncertain">Uncertain</button>
+      </div>
+      <div id="marker-status" class="marker-status">No field marker yet</div>
     </section>
     <footer>
       <div id="range">range</div>
@@ -419,12 +546,97 @@ def dashboard_html() -> bytes:
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
+    const chart = $("chart");
+    const ctx = chart.getContext("2d");
     function level(delta, threshold) {
-      if (delta >= threshold + 10) return ["extreme", "extreme"];
-      if (delta >= threshold + 5) return ["strong", "strong"];
-      if (delta >= threshold) return ["elevated", "elevated"];
-      return ["normal", "normal"];
+      if (delta >= threshold + 10) return ["extreme", "strong"];
+      if (delta >= threshold + 5) return ["strong", "burst"];
+      if (delta >= threshold) return ["elevated", "watch"];
+      return ["normal", "quiet"];
     }
+    function smooth(series, key) {
+      return series.map((point, index) => {
+        const start = Math.max(0, index - 2);
+        const window = series.slice(start, index + 1)
+          .map((item) => item[key])
+          .filter((value) => Number.isFinite(value));
+        return window.reduce((sum, value) => sum + value, 0) / window.length;
+      });
+    }
+    function drawChart(series) {
+      const width = chart.width;
+      const height = chart.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(0,0,0,.18)";
+      ctx.fillRect(0, 0, width, height);
+
+      if (!series || series.length < 2) {
+        ctx.fillStyle = "rgba(255,255,255,.55)";
+        ctx.font = "28px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+        ctx.fillText("waiting for readings", 24, height / 2);
+        return;
+      }
+
+      const powerLine = smooth(series, "power_db");
+      const baselineLine = smooth(series, "baseline_db");
+      const values = [...powerLine, ...baselineLine]
+        .filter((value) => Number.isFinite(value));
+      const min = Math.min(...values) - 2;
+      const max = Math.max(...values) + 2;
+      const span = Math.max(1, max - min);
+      const x = (index) => (index / Math.max(1, series.length - 1)) * (width - 42) + 28;
+      const y = (value) => height - 28 - ((value - min) / span) * (height - 52);
+
+      ctx.strokeStyle = "rgba(255,255,255,.16)";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "rgba(255,255,255,.55)";
+      ctx.font = "18px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+      for (let i = 0; i < 4; i += 1) {
+        const gy = 18 + i * ((height - 44) / 3);
+        const label = max - i * (span / 3);
+        ctx.beginPath();
+        ctx.moveTo(24, gy);
+        ctx.lineTo(width - 14, gy);
+        ctx.stroke();
+        ctx.fillText(`${label.toFixed(0)} dB`, 28, gy - 5);
+      }
+
+      function line(values, color, widthPx) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = widthPx;
+        ctx.beginPath();
+        values.forEach((value, index) => {
+          const px = x(index);
+          const py = y(value);
+          if (index === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+
+      line(baselineLine, "rgba(255,255,255,.38)", 3);
+      line(powerLine, "#fff4d6", 5);
+
+      const last = series[series.length - 1];
+      ctx.fillStyle = "#fff4d6";
+      ctx.beginPath();
+      ctx.arc(x(series.length - 1), y(powerLine[powerLine.length - 1]), 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      $("chart-meta").textContent =
+        `${series.length} samples | ${min.toFixed(1)} to ${max.toFixed(1)} dB`;
+    }
+    async function markObservation(label) {
+      const response = await fetch(`/mark?label=${encodeURIComponent(label)}`, {
+        cache: "no-store"
+      });
+      const result = await response.json();
+      $("marker-status").textContent =
+        `marked ${result.label.replaceAll("_", " ")} at ${result.timestamp}`;
+    }
+    document.querySelectorAll(".mark-button").forEach((button) => {
+      button.addEventListener("click", () => markObservation(button.dataset.label));
+    });
     async function refresh() {
       const response = await fetch("/state", { cache: "no-store" });
       const state = await response.json();
@@ -442,14 +654,24 @@ def dashboard_html() -> bytes:
 
       document.body.className = className;
       $("status").textContent = state.sample_count < state.warmup_samples ? "warming" : label;
-      $("delta").textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB`;
+      $("power-main").textContent = main ? `${main.power_db.toFixed(1)} dB` : "---";
+      $("delta").textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB above baseline`;
+      $("delta-card").textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB`;
       $("freq").textContent = main ? `${main.frequency_mhz.toFixed(6)} MHz` : "---";
-      $("power").textContent = main ? `${main.power_db.toFixed(1)} dB` : "---";
       $("baseline").textContent = main && Number.isFinite(main.baseline_db) ? `${main.baseline_db.toFixed(1)} dB` : "---";
       $("incidents").textContent = active.length;
+      const peak = state.recent_peak;
+      if (peak) {
+        $("peak-power").textContent = `${peak.power_db.toFixed(1)} dB`;
+        $("peak-meta").textContent =
+          `${peak.frequency_mhz.toFixed(6)} MHz | ${peak.age_seconds.toFixed(0)}s ago | ${peak.delta_db >= 0 ? "+" : ""}${peak.delta_db.toFixed(1)} dB`;
+      }
+      $("mode").textContent = state.range === "380M:385M:25k" ? "mobile" : "custom";
+      $("mode-meta").textContent = state.range || "";
       $("updated").textContent = state.updated_at || "waiting";
       $("range").textContent = state.range || "";
       $("samples").textContent = `samples ${state.sample_count || 0}`;
+      drawChart(state.series || []);
     }
     refresh().catch(() => {});
     setInterval(() => refresh().catch(() => {}), 1000);
@@ -459,13 +681,20 @@ def dashboard_html() -> bytes:
 """
 
 
-def start_dashboard(state: DashboardState, host: str, port: int) -> ThreadingHTTPServer:
+def start_dashboard(
+    state: DashboardState,
+    host: str,
+    port: int,
+    mark_observation,
+) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
             return
 
         def do_GET(self) -> None:
-            if self.path == "/state":
+            parsed = urlparse(self.path)
+
+            if parsed.path == "/state":
                 body = json.dumps(state.snapshot()).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -475,7 +704,20 @@ def start_dashboard(state: DashboardState, host: str, port: int) -> ThreadingHTT
                 self.wfile.write(body)
                 return
 
-            if self.path in {"/", "/index.html"}:
+            if parsed.path == "/mark":
+                params = parse_qs(parsed.query)
+                label = params.get("label", ["manual_marker"])[0]
+                marker = mark_observation(label)
+                body = json.dumps(marker).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if parsed.path in {"/", "/index.html"}:
                 body = dashboard_html()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -545,6 +787,43 @@ def open_readings_log(path: Path) -> tuple[object, csv.DictWriter]:
         writer.writeheader()
         fp.flush()
     return fp, writer
+
+
+def open_observations_log(path: Path) -> tuple[object, csv.DictWriter]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not path.exists() or path.stat().st_size == 0
+    fp = path.open("a", newline="")
+    writer = csv.DictWriter(
+        fp,
+        fieldnames=[
+            "timestamp",
+            "label",
+            "note",
+            "range",
+            "sample",
+            "current_frequency_mhz",
+            "current_power_db",
+            "current_baseline_db",
+            "current_delta_db",
+            "recent_peak_frequency_mhz",
+            "recent_peak_power_db",
+            "recent_peak_delta_db",
+        ],
+    )
+    if needs_header:
+        writer.writeheader()
+        fp.flush()
+    return fp, writer
+
+
+def sanitize_label(label: str) -> str:
+    cleaned = []
+    for char in label.strip().lower():
+        if char.isalnum() or char in {"_", "-"}:
+            cleaned.append(char)
+        elif char.isspace():
+            cleaned.append("_")
+    return "".join(cleaned)[:64] or "manual_marker"
 
 
 def write_activity(
@@ -679,7 +958,42 @@ def monitor(args: argparse.Namespace) -> int:
     sample_count = 0
     activity_fp, activity_writer = open_activity_log(Path(args.activity_log))
     readings_fp, readings_writer = open_readings_log(Path(args.readings_log))
+    observations_fp, observations_writer = open_observations_log(
+        Path(args.observations_log)
+    )
     recent_events: deque[dict[str, object]] = deque(maxlen=20)
+    recent_observations: deque[dict[str, object]] = deque(maxlen=20)
+    series: deque[dict[str, object]] = deque(maxlen=180)
+    recent_peak: dict[str, object] | None = None
+    latest_top_reading: dict[str, object] | None = None
+
+    def mark_observation(label: str) -> dict[str, object]:
+        nonlocal latest_top_reading, recent_peak, sample_count
+        now = dt.datetime.now().astimezone()
+        safe_label = sanitize_label(label)
+        current = latest_top_reading or {}
+        peak = recent_peak or {}
+        marker = {
+            "timestamp": now.isoformat(timespec="seconds"),
+            "label": safe_label,
+            "note": "",
+            "range": args.range,
+            "sample": sample_count,
+            "current_frequency_mhz": current.get("frequency_mhz", ""),
+            "current_power_db": current.get("power_db", ""),
+            "current_baseline_db": current.get("baseline_db", ""),
+            "current_delta_db": current.get("delta_db", ""),
+            "recent_peak_frequency_mhz": peak.get("frequency_mhz", ""),
+            "recent_peak_power_db": peak.get("power_db", ""),
+            "recent_peak_delta_db": peak.get("delta_db", ""),
+        }
+        observations_writer.writerow(marker)
+        observations_fp.flush()
+        recent_observations.appendleft(marker)
+        dashboard_state.update(recent_observations=list(recent_observations))
+        print(f"MARK {marker['timestamp']} {safe_label}")
+        return marker
+
     dashboard_state = DashboardState()
     dashboard_state.update(
         threshold_db=args.threshold_db,
@@ -697,6 +1011,7 @@ def monitor(args: argparse.Namespace) -> int:
             dashboard_state,
             args.dashboard_host,
             args.dashboard_port,
+            mark_observation,
         )
         print(f"Dashboard: http://{args.dashboard_host}:{args.dashboard_port}")
 
@@ -706,6 +1021,7 @@ def monitor(args: argparse.Namespace) -> int:
     print(f"Monitoring {args.range}; writing temporary rtl_power CSV to {output_path}")
     print(f"Recording incidents to {Path(args.activity_log).resolve()}")
     print(f"Recording strongest readings to {Path(args.readings_log).resolve()}")
+    print(f"Recording field markers to {Path(args.observations_log).resolve()}")
     print("Press Ctrl-C to stop.")
 
     process = start_rtl_power(args, output_path)
@@ -845,6 +1161,34 @@ def monitor(args: argparse.Namespace) -> int:
                     key=lambda item: float(item["power_db"]),
                     reverse=True,
                 )[: args.top]
+                if strongest:
+                    top_reading = strongest[0]
+                    latest_top_reading = {
+                        "frequency_mhz": float(top_reading["frequency_mhz"]),
+                        "power_db": float(top_reading["power_db"]),
+                        "baseline_db": float(top_reading["baseline_db"]),
+                        "delta_db": float(top_reading["delta_db"]),
+                    }
+                    if (
+                        recent_peak is None
+                        or float(top_reading["power_db"]) > float(recent_peak["power_db"])
+                    ):
+                        recent_peak = {
+                            "timestamp": now,
+                            "frequency_mhz": float(top_reading["frequency_mhz"]),
+                            "power_db": float(top_reading["power_db"]),
+                            "baseline_db": float(top_reading["baseline_db"]),
+                            "delta_db": float(top_reading["delta_db"]),
+                        }
+                    series.append(
+                        {
+                            "timestamp": now.strftime("%H:%M:%S"),
+                            "frequency_mhz": float(top_reading["frequency_mhz"]),
+                            "power_db": float(top_reading["power_db"]),
+                            "baseline_db": float(top_reading["baseline_db"]),
+                            "delta_db": float(top_reading["delta_db"]),
+                        }
+                    )
                 for rank, reading in enumerate(strongest[: args.log_top], start=1):
                     write_reading(
                         readings_writer,
@@ -891,6 +1235,15 @@ def monitor(args: argparse.Namespace) -> int:
                     active_incidents=active_clusters,
                     active_bins=active_incidents,
                     recent_events=list(recent_events),
+                    recent_observations=list(recent_observations),
+                    series=list(series),
+                    recent_peak={
+                        **recent_peak,
+                        "timestamp": recent_peak["timestamp"].isoformat(timespec="seconds"),
+                        "age_seconds": (now - recent_peak["timestamp"]).total_seconds(),
+                    }
+                    if recent_peak is not None
+                    else None,
                     status="active" if active_incidents else "normal",
                     message="Active incident" if active_incidents else "Monitoring",
                 )
@@ -926,6 +1279,8 @@ def monitor(args: argparse.Namespace) -> int:
         activity_fp.close()
         readings_fp.flush()
         readings_fp.close()
+        observations_fp.flush()
+        observations_fp.close()
         if process.poll() is None:
             process.terminate()
             try:

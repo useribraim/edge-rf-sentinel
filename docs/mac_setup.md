@@ -52,6 +52,32 @@ Mobile or nearby transmitters are more likely to appear as short bursts, sudden
 local spikes, or clusters that appear/disappear quickly. Treat detections as
 probabilistic RF observations, not identity or content.
 
+The dashboard includes a live time-series chart for the strongest reading in
+the current `380-385 MHz` scan. The bright line is measured power and the faint
+line is the rolling baseline.
+
+When you pass something you want to correlate later, tap one of the field marker
+buttons on the dashboard:
+
+- `Vehicle visible`
+- `Passed close`
+- `Uncertain`
+
+Markers are written to:
+
+```text
+logs/rf_mobile_observations.csv
+```
+
+After a drive, compare RF readings around each marker:
+
+```sh
+python3 analyze_drive.py \
+  --readings logs/rf_mobile_readings.csv \
+  --observations logs/rf_mobile_observations.csv \
+  --window-seconds 30
+```
+
 ## Custom Scan
 
 Keep ranges narrow for responsive updates:
