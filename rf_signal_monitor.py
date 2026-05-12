@@ -277,7 +277,9 @@ class DashboardState:
             "active_incidents": [],
             "recent_events": [],
             "recent_observations": [],
+            "strongest_incidents": [],
             "series": [],
+            "tuning": {},
             "threshold_db": 0,
             "range": "",
         }
@@ -469,6 +471,44 @@ def dashboard_html() -> bytes:
       font-weight: 650;
       min-height: 24px;
     }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 12px;
+    }
+    .info-panel {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 150px;
+    }
+    .info-title {
+      color: rgba(255,255,255,.68);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .tune-list, .incident-list {
+      display: grid;
+      gap: 7px;
+      font-size: clamp(13px, 1.5vw, 18px);
+      font-weight: 650;
+      color: rgba(255,255,255,.8);
+      font-variant-numeric: tabular-nums;
+    }
+    .tune-row, .incident-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding-bottom: 5px;
+    }
+    .incident-row {
+      display: grid;
+      grid-template-columns: 78px 1fr 90px 90px;
+      align-items: baseline;
+    }
     footer {
       font-variant-numeric: tabular-nums;
     }
@@ -479,6 +519,8 @@ def dashboard_html() -> bytes:
       .primary { min-height: 220px; }
       .details { grid-template-columns: 1fr; }
       .marker-row { grid-template-columns: 1fr; }
+      .info-grid { grid-template-columns: 1fr; }
+      .incident-row { grid-template-columns: 70px 1fr 78px 78px; }
     }
   </style>
 </head>
@@ -538,6 +580,16 @@ def dashboard_html() -> bytes:
         <button class="mark-button" data-label="uncertain">Uncertain</button>
       </div>
       <div id="marker-status" class="marker-status">No field marker yet</div>
+      <div class="info-grid">
+        <div class="info-panel">
+          <div class="info-title">Current tuning</div>
+          <div id="tuning" class="tune-list"></div>
+        </div>
+        <div class="info-panel">
+          <div class="info-title">Last 5 strongest incidents</div>
+          <div id="strongest-incidents" class="incident-list"></div>
+        </div>
+      </div>
     </section>
     <footer>
       <div id="range">range</div>
@@ -634,6 +686,34 @@ def dashboard_html() -> bytes:
       $("marker-status").textContent =
         `marked ${result.label.replaceAll("_", " ")} at ${result.timestamp}`;
     }
+    function renderTuning(tuning) {
+      const rows = [
+        ["range", tuning.range],
+        ["interval", tuning.interval],
+        ["threshold", `${Number(tuning.threshold_db).toFixed(1)} dB`],
+        ["min power", `${Number(tuning.incident_min_power_db).toFixed(1)} dB`],
+        ["hold", `${tuning.hold_samples} samples`],
+        ["cluster", `${Number(tuning.cluster_khz).toFixed(0)} kHz`]
+      ];
+      $("tuning").innerHTML = rows.map(([key, value]) =>
+        `<div class="tune-row"><span>${key}</span><span>${value ?? "---"}</span></div>`
+      ).join("");
+    }
+    function renderStrongestIncidents(incidents) {
+      if (!incidents || !incidents.length) {
+        $("strongest-incidents").innerHTML =
+          `<div class="muted-line">No incidents yet</div>`;
+        return;
+      }
+      $("strongest-incidents").innerHTML = incidents.slice(0, 5).map((incident) =>
+        `<div class="incident-row">
+          <span>${incident.time}</span>
+          <span>${incident.frequency_mhz.toFixed(6)} MHz</span>
+          <span>${incident.peak_power_db.toFixed(1)} dB</span>
+          <span>${incident.peak_delta_db >= 0 ? "+" : ""}${incident.peak_delta_db.toFixed(1)}</span>
+        </div>`
+      ).join("");
+    }
     document.querySelectorAll(".mark-button").forEach((button) => {
       button.addEventListener("click", () => markObservation(button.dataset.label));
     });
@@ -671,6 +751,8 @@ def dashboard_html() -> bytes:
       $("updated").textContent = state.updated_at || "waiting";
       $("range").textContent = state.range || "";
       $("samples").textContent = `samples ${state.sample_count || 0}`;
+      renderTuning(state.tuning || {});
+      renderStrongestIncidents(state.strongest_incidents || []);
       drawChart(state.series || []);
     }
     refresh().catch(() => {});
@@ -964,6 +1046,7 @@ def monitor(args: argparse.Namespace) -> int:
     recent_events: deque[dict[str, object]] = deque(maxlen=20)
     recent_observations: deque[dict[str, object]] = deque(maxlen=20)
     series: deque[dict[str, object]] = deque(maxlen=180)
+    strongest_incidents: list[dict[str, object]] = []
     recent_peak: dict[str, object] | None = None
     latest_top_reading: dict[str, object] | None = None
 
@@ -1003,6 +1086,17 @@ def monitor(args: argparse.Namespace) -> int:
         absolute_strong_db=args.absolute_strong_db,
         absolute_extreme_db=args.absolute_extreme_db,
         cluster_khz=args.cluster_khz,
+        tuning={
+            "range": args.range,
+            "interval": args.interval,
+            "gain": args.gain,
+            "threshold_db": args.threshold_db,
+            "incident_min_power_db": args.incident_min_power_db,
+            "hold_samples": args.hold_samples,
+            "cluster_khz": args.cluster_khz,
+            "baseline_samples": args.baseline_samples,
+            "warmup_samples": args.warmup_samples,
+        },
     )
 
     dashboard_server = None
@@ -1120,6 +1214,22 @@ def monitor(args: argparse.Namespace) -> int:
                     elif incident is not None:
                         incident["below_count"] = int(incident["below_count"]) + 1
                         if int(incident["below_count"]) >= args.hold_samples:
+                            ended_incident = {
+                                "time": now.strftime("%H:%M:%S"),
+                                "timestamp": now.isoformat(timespec="seconds"),
+                                "frequency_mhz": freq_hz / 1_000_000,
+                                "duration_seconds": (
+                                    now - incident["start"]
+                                ).total_seconds(),
+                                "peak_power_db": float(incident["peak_power"]),
+                                "peak_delta_db": float(incident["peak_delta"]),
+                            }
+                            strongest_incidents.append(ended_incident)
+                            strongest_incidents = sorted(
+                                strongest_incidents,
+                                key=lambda item: float(item["peak_power_db"]),
+                                reverse=True,
+                            )[:5]
                             write_activity(
                                 activity_writer,
                                 event="end",
@@ -1236,6 +1346,7 @@ def monitor(args: argparse.Namespace) -> int:
                     active_bins=active_incidents,
                     recent_events=list(recent_events),
                     recent_observations=list(recent_observations),
+                    strongest_incidents=strongest_incidents,
                     series=list(series),
                     recent_peak={
                         **recent_peak,
