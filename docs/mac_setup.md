@@ -105,6 +105,15 @@ The activity log records incident state transitions:
 - `active`
 - `end`
 
+Cluster-level incident logs are written next to the activity log, for example:
+
+```text
+logs/rf_mobile_activity_clusters.csv
+```
+
+Use the cluster log for post-drive review. It records one event per RF cluster
+instead of one event per FFT bin.
+
 The readings log records the strongest bins each scan row, even when no
 incident is active. This is the better file for replay, analysis, and future
 model training.
@@ -130,6 +139,12 @@ Ignore weak baseline jumps:
 
 ```sh
 python3 rf_signal_monitor.py --incident-min-power-db -18
+```
+
+Ignore very short spikes:
+
+```sh
+python3 rf_signal_monitor.py --min-incident-samples 3 --hold-samples 5
 ```
 
 Adjust visual severity:
