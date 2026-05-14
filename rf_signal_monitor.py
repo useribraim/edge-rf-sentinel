@@ -486,6 +486,7 @@ class DashboardState:
             "active_incidents": [],
             "recent_events": [],
             "recent_observations": [],
+            "recent_peaks": [],
             "strongest_incidents": [],
             "series": [],
             "tuning": {},
@@ -656,6 +657,54 @@ def dashboard_html() -> bytes:
     }
     .peak .value {
       font-size: clamp(28px, 4vw, 56px);
+    }
+    .recent-peaks {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .peak-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: start;
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 8px;
+      background: rgba(0,0,0,.18);
+      padding: 11px 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .peak-row .peak-time {
+      color: rgba(255,255,255,.72);
+      font-size: clamp(14px, 1.5vw, 18px);
+      font-weight: 850;
+      line-height: 1.1;
+    }
+    .peak-row .peak-db {
+      color: #fff4d6;
+      grid-column: 1 / -1;
+      font-size: clamp(32px, 4.2vw, 54px);
+      font-weight: 950;
+      line-height: 1;
+      overflow-wrap: normal;
+      white-space: nowrap;
+    }
+    .peak-row .peak-age {
+      color: rgba(255,255,255,.62);
+      font-size: clamp(13px, 1.4vw, 17px);
+      font-weight: 850;
+      text-align: right;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+    .peak-row .peak-detail {
+      grid-column: 1 / -1;
+      color: rgba(255,255,255,.58);
+      font-size: clamp(12px, 1.4vw, 17px);
+      font-weight: 750;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .muted-line {
       color: rgba(255,255,255,.62);
@@ -955,9 +1004,10 @@ def dashboard_html() -> bytes:
         </div>
         <div class="side">
           <div class="metric peak">
-            <div class="label">Recent peak</div>
-            <div id="peak-power" class="value">---</div>
-            <div id="peak-meta" class="muted-line">no peak yet</div>
+            <div class="label">Last 5 peaks</div>
+            <div id="recent-peaks" class="recent-peaks">
+              <div class="muted-line">no peaks yet</div>
+            </div>
           </div>
           <div class="metric">
             <div class="label">Mode</div>
@@ -1257,6 +1307,20 @@ def dashboard_html() -> bytes:
         </div>`
       ).join("");
     }
+    function renderRecentPeaks(peaks) {
+      if (!peaks || !peaks.length) {
+        $("recent-peaks").innerHTML = `<div class="muted-line">no peaks yet</div>`;
+        return;
+      }
+      $("recent-peaks").innerHTML = peaks.slice(0, 5).map((peak) =>
+        `<div class="peak-row">
+          <span class="peak-time">${peak.time || shortTime(peak.timestamp)}</span>
+          <span class="peak-age">${Number(peak.age_seconds || 0).toFixed(0)}s ago</span>
+          <span class="peak-db">${Number(peak.power_db).toFixed(1)} dB</span>
+          <span class="peak-detail">${Number(peak.frequency_mhz).toFixed(6)} MHz | ${Number(peak.delta_db) >= 0 ? "+" : ""}${Number(peak.delta_db).toFixed(1)} dB delta</span>
+        </div>`
+      ).join("");
+    }
     function setMode(mode) {
       currentMode = mode;
       $("detector-mode").classList.toggle("hidden", mode !== "detector");
@@ -1451,12 +1515,7 @@ def dashboard_html() -> bytes:
       $("freq").textContent = main ? `${main.frequency_mhz.toFixed(6)} MHz` : "---";
       $("baseline").textContent = main && Number.isFinite(main.baseline_db) ? `${main.baseline_db.toFixed(1)} dB` : "---";
       $("incidents").textContent = active.length;
-      const peak = state.recent_peak;
-      if (peak) {
-        $("peak-power").textContent = `${peak.power_db.toFixed(1)} dB`;
-        $("peak-meta").textContent =
-          `${peak.frequency_mhz.toFixed(6)} MHz | ${peak.age_seconds.toFixed(0)}s ago | ${peak.delta_db >= 0 ? "+" : ""}${peak.delta_db.toFixed(1)} dB`;
-      }
+      renderRecentPeaks(state.recent_peaks || []);
       const tuning = state.tuning || {};
       $("mode").textContent = tuning.tune_label || (state.range === "380M:385M:25k" ? "mobile" : "custom");
       $("mode-meta").textContent = `${state.range || ""} | gain ${tuning.gain ?? "---"} | threshold ${Number(tuning.threshold_db || 0).toFixed(1)} dB`;
@@ -2762,6 +2821,7 @@ def monitor(args: argparse.Namespace) -> int:
     cluster_tracks: dict[int, dict[str, object]] = {}
     next_cluster_track_id = 1
     recent_peak: dict[str, object] | None = None
+    recent_peaks: deque[dict[str, object]] = deque(maxlen=5)
     latest_top_reading: dict[str, object] | None = None
     pending_tune: dict[str, str | None] = {"name": None}
     pending_tune_lock = threading.Lock()
@@ -2933,6 +2993,7 @@ def monitor(args: argparse.Namespace) -> int:
                 next_cluster_track_id = 1
                 sample_count = 0
                 recent_peak = None
+                recent_peaks.clear()
                 latest_top_reading = None
                 series.clear()
                 strongest_incidents.clear()
@@ -2962,6 +3023,7 @@ def monitor(args: argparse.Namespace) -> int:
                     strongest_incidents=[],
                     series=[],
                     recent_peak=None,
+                    recent_peaks=[],
                     status="warming",
                     message="Building baseline",
                     demo=args.demo,
@@ -3149,6 +3211,42 @@ def monitor(args: argparse.Namespace) -> int:
                             "baseline_db": float(top_reading["baseline_db"]),
                             "delta_db": float(top_reading["delta_db"]),
                         }
+                    is_peak_sample = (
+                        sample_count > args.warmup_samples
+                        and (
+                            float(top_reading["power_db"]) >= -25.0
+                            or float(top_reading["delta_db"]) >= 8.0
+                        )
+                    )
+                    if is_peak_sample:
+                        peak_sample = {
+                            "timestamp": now,
+                            "time": now.strftime("%H:%M:%S"),
+                            "frequency_mhz": float(top_reading["frequency_mhz"]),
+                            "power_db": float(top_reading["power_db"]),
+                            "baseline_db": float(top_reading["baseline_db"]),
+                            "delta_db": float(top_reading["delta_db"]),
+                        }
+                        if recent_peaks:
+                            previous_peak = recent_peaks[0]
+                            gap = (
+                                now - previous_peak["timestamp"]
+                            ).total_seconds()
+                            same_burst = (
+                                gap <= 2.0
+                                and abs(
+                                    float(peak_sample["frequency_mhz"])
+                                    - float(previous_peak["frequency_mhz"])
+                                )
+                                <= 0.15
+                            )
+                            if same_burst:
+                                if float(peak_sample["power_db"]) > float(previous_peak["power_db"]):
+                                    recent_peaks[0] = peak_sample
+                            else:
+                                recent_peaks.appendleft(peak_sample)
+                        else:
+                            recent_peaks.appendleft(peak_sample)
                     series.append(
                         {
                             "timestamp": now.strftime("%H:%M:%S"),
@@ -3211,6 +3309,14 @@ def monitor(args: argparse.Namespace) -> int:
                     recent_events=list(recent_events),
                     recent_observations=list(recent_observations),
                     strongest_incidents=strongest_incidents,
+                    recent_peaks=[
+                        {
+                            **peak,
+                            "timestamp": peak["timestamp"].isoformat(timespec="seconds"),
+                            "age_seconds": (now - peak["timestamp"]).total_seconds(),
+                        }
+                        for peak in list(recent_peaks)
+                    ],
                     label_prompt=label_prompt,
                     series=list(series),
                     recent_peak={
