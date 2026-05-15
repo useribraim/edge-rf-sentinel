@@ -660,47 +660,47 @@ def dashboard_html() -> bytes:
     }
     .recent-peaks {
       display: grid;
-      gap: 8px;
-      margin-top: 8px;
+      gap: 6px;
+      margin-top: 6px;
     }
     .peak-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
-      gap: 10px;
+      gap: 6px;
       align-items: start;
       border: 1px solid rgba(255,255,255,.10);
       border-radius: 8px;
       background: rgba(0,0,0,.18);
-      padding: 11px 12px;
+      padding: 8px 10px;
       font-variant-numeric: tabular-nums;
     }
     .peak-row .peak-time {
       color: rgba(255,255,255,.72);
-      font-size: clamp(14px, 1.5vw, 18px);
+      font-size: clamp(12px, 1.3vw, 16px);
       font-weight: 850;
       line-height: 1.1;
     }
     .peak-row .peak-db {
       color: #fff4d6;
       grid-column: 1 / -1;
-      font-size: clamp(32px, 4.2vw, 54px);
+      font-size: clamp(24px, 3.2vw, 38px);
       font-weight: 950;
       line-height: 1;
       overflow-wrap: normal;
       white-space: nowrap;
     }
     .peak-row .peak-age {
-      color: rgba(255,255,255,.62);
-      font-size: clamp(13px, 1.4vw, 17px);
-      font-weight: 850;
+      color: #fff4d6;
+      font-size: clamp(17px, 2.2vw, 27px);
+      font-weight: 950;
       text-align: right;
-      line-height: 1.1;
+      line-height: .95;
       white-space: nowrap;
     }
     .peak-row .peak-detail {
       grid-column: 1 / -1;
       color: rgba(255,255,255,.58);
-      font-size: clamp(12px, 1.4vw, 17px);
+      font-size: clamp(11px, 1.2vw, 15px);
       font-weight: 750;
       white-space: nowrap;
       overflow: hidden;
@@ -3213,10 +3213,7 @@ def monitor(args: argparse.Namespace) -> int:
                         }
                     is_peak_sample = (
                         sample_count > args.warmup_samples
-                        and (
-                            float(top_reading["power_db"]) >= -25.0
-                            or float(top_reading["delta_db"]) >= 8.0
-                        )
+                        and float(top_reading["power_db"]) >= -25.0
                     )
                     if is_peak_sample:
                         peak_sample = {
