@@ -2561,6 +2561,65 @@ def reading_payload(
     }
 
 
+def peak_payload(
+    reading: dict[str, float | int],
+    timestamp: dt.datetime,
+) -> dict[str, object]:
+    return {
+        "timestamp": timestamp,
+        "time": timestamp.strftime("%H:%M:%S"),
+        "frequency_mhz": float(reading["frequency_mhz"]),
+        "power_db": float(reading["power_db"]),
+        "baseline_db": float(reading["baseline_db"]),
+        "delta_db": float(reading["delta_db"]),
+    }
+
+
+def update_recent_peaks(
+    recent_peaks: deque[dict[str, object]],
+    peak_sample: dict[str, object],
+    *,
+    merge_seconds: float = 2.0,
+    merge_frequency_mhz: float = 0.15,
+) -> None:
+    if not recent_peaks:
+        recent_peaks.appendleft(peak_sample)
+        return
+
+    previous_peak = recent_peaks[0]
+    gap = (
+        peak_sample["timestamp"] - previous_peak["timestamp"]
+    ).total_seconds()
+    same_burst = (
+        gap <= merge_seconds
+        and abs(
+            float(peak_sample["frequency_mhz"])
+            - float(previous_peak["frequency_mhz"])
+        )
+        <= merge_frequency_mhz
+    )
+    if same_burst:
+        if float(peak_sample["power_db"]) > float(previous_peak["power_db"]):
+            recent_peaks[0] = peak_sample
+        return
+
+    recent_peaks.appendleft(peak_sample)
+
+
+def recent_peaks_payload(
+    recent_peaks: deque[dict[str, object]],
+    now: dt.datetime,
+) -> list[dict[str, object]]:
+    return [
+        {
+            **peak,
+            "timestamp": peak["timestamp"].isoformat(timespec="seconds"),
+            "age_seconds": (now - peak["timestamp"]).total_seconds(),
+        }
+        for peak in list(recent_peaks)
+    ]
+
+
 def cluster_readings(
     readings: list[dict[str, object]],
     cluster_hz: float,
@@ -3216,34 +3275,10 @@ def monitor(args: argparse.Namespace) -> int:
                         and float(top_reading["power_db"]) >= -25.0
                     )
                     if is_peak_sample:
-                        peak_sample = {
-                            "timestamp": now,
-                            "time": now.strftime("%H:%M:%S"),
-                            "frequency_mhz": float(top_reading["frequency_mhz"]),
-                            "power_db": float(top_reading["power_db"]),
-                            "baseline_db": float(top_reading["baseline_db"]),
-                            "delta_db": float(top_reading["delta_db"]),
-                        }
-                        if recent_peaks:
-                            previous_peak = recent_peaks[0]
-                            gap = (
-                                now - previous_peak["timestamp"]
-                            ).total_seconds()
-                            same_burst = (
-                                gap <= 2.0
-                                and abs(
-                                    float(peak_sample["frequency_mhz"])
-                                    - float(previous_peak["frequency_mhz"])
-                                )
-                                <= 0.15
-                            )
-                            if same_burst:
-                                if float(peak_sample["power_db"]) > float(previous_peak["power_db"]):
-                                    recent_peaks[0] = peak_sample
-                            else:
-                                recent_peaks.appendleft(peak_sample)
-                        else:
-                            recent_peaks.appendleft(peak_sample)
+                        update_recent_peaks(
+                            recent_peaks,
+                            peak_payload(top_reading, now),
+                        )
                     series.append(
                         {
                             "timestamp": now.strftime("%H:%M:%S"),
@@ -3306,14 +3341,7 @@ def monitor(args: argparse.Namespace) -> int:
                     recent_events=list(recent_events),
                     recent_observations=list(recent_observations),
                     strongest_incidents=strongest_incidents,
-                    recent_peaks=[
-                        {
-                            **peak,
-                            "timestamp": peak["timestamp"].isoformat(timespec="seconds"),
-                            "age_seconds": (now - peak["timestamp"]).total_seconds(),
-                        }
-                        for peak in list(recent_peaks)
-                    ],
+                    recent_peaks=recent_peaks_payload(recent_peaks, now),
                     label_prompt=label_prompt,
                     series=list(series),
                     recent_peak={
