@@ -1,8 +1,9 @@
 # Edge RF Sentinel
 
-Embedded SDR-based RF monitor for real-time signal burst detection, adaptive
-baseline tracking, event logging, edge visualization, and ML-ready field
-observation workflows.
+Real-time RF sensing and drive-session analysis prototype built around
+RTL-SDR hardware. It records signal-strength sweeps, tracks burst events,
+supports manual field labels, and produces session logs for offline analysis
+and future classifier experiments.
 
 ## Overview
 
@@ -21,6 +22,20 @@ pipeline:
 The detector is intentionally rule-based today. The logging format is designed
 to support future supervised or tinyML classifiers once enough field-labeled RF
 captures are collected.
+
+For a module-by-module walkthrough, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Project Map
+
+- `rf_signal_monitor.py` - live monitor entrypoint, CLI/config, dashboard server,
+  and runtime orchestration
+- `edge_rf/scanner.py` - RTL-SDR process startup, `rtl_power` row parsing, and
+  demo/debug row generation
+- `edge_rf/detection.py` - recent peaks, burst grouping, cluster tracking, and
+  incident confirmation
+- `edge_rf/csv_logs.py` - stable CSV session logging
+- `edge_rf/analysis.py` - offline drive-session analysis and burst summaries
+- `ARCHITECTURE.md` - detailed system flow and interview-oriented explanation
 
 ## Hardware
 
@@ -51,13 +66,13 @@ at a time.
 
 ## Quick Start
 
-Fixed-site style preset:
+Live hardware mode, fixed-site style preset:
 
 ```sh
 python3 rf_signal_monitor.py --preset base --dashboard
 ```
 
-Mobile/burst style preset:
+Live hardware mode, mobile/burst style preset:
 
 ```sh
 python3 rf_signal_monitor.py --preset mobile --dashboard
@@ -68,6 +83,15 @@ Open the dashboard:
 ```text
 http://127.0.0.1:8765
 ```
+
+UI/debug mode without SDR hardware:
+
+```sh
+python3 rf_signal_monitor.py --demo --dashboard
+```
+
+Demo mode only simulates RF readings so the dashboard and logging pipeline can
+be tested without the dongle. Real measurements require RTL-SDR hardware.
 
 ## Custom Scan
 
@@ -87,10 +111,12 @@ reduce per-frequency update rate.
 
 ## Outputs
 
-The monitor writes two CSV streams:
+The monitor writes per-session CSV files:
 
-- readings log: strongest bins for every scan row
-- activity log: incident `start`, `active`, and `end` rows
+- `readings.csv`: strongest bins for every scan row
+- `activity.csv`: single-bin incident `start`, `active`, and `end` rows
+- `activity_clusters.csv`: clustered incident `start`, `active`, and `end` rows
+- `observations.csv`: manual field labels such as visible vehicle intervals
 
 Preset logs are written under `logs/` and are ignored by Git. Use these logs for
 offline analysis, replay, and field-label correlation.
@@ -142,8 +168,6 @@ field logging within your local laws and authorizations.
 
 ## Roadmap
 
-- split detector, dashboard, and scanner into package modules
 - add offline replay from readings CSV
-- add manual field-label workflow
 - add Raspberry Pi boot-to-dashboard profile
 - evaluate lightweight embedded classifiers from labeled feature datasets
