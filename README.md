@@ -24,6 +24,8 @@ to support future supervised or tinyML classifiers once enough field-labeled RF
 captures are collected.
 
 For a module-by-module walkthrough, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the capture, logging, burst extraction, and labelling flow, see
+[docs/data_pipeline.md](docs/data_pipeline.md).
 
 ## Project Map
 
@@ -36,6 +38,8 @@ For a module-by-module walkthrough, see [ARCHITECTURE.md](ARCHITECTURE.md).
 - `edge_rf/csv_logs.py` - stable CSV session logging
 - `edge_rf/analysis.py` - offline drive-session analysis and burst summaries
 - `ARCHITECTURE.md` - detailed system flow and interview-oriented explanation
+- `docs/data_pipeline.md` - RF capture, session logs, burst extraction, labels,
+  and classifier readiness
 
 ## Hardware
 
@@ -132,10 +136,11 @@ make
 Convert readings into compact burst-level features:
 
 ```sh
-build/extract_features logs/rf_mobile_readings.csv features.csv
+build/extract_features logs/sessions/<session_id>/readings.csv features.csv
 ```
 
-The C++ tool groups incident bins into time-contiguous clusters and emits
+The source for replayable feature extraction is the session `readings.csv`
+file. The C++ tool groups incident bins into time-contiguous clusters and emits
 features such as:
 
 - burst start/end time
