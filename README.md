@@ -152,6 +152,7 @@ features such as:
 - mean power/delta
 - rise and fall rates
 - snapshot and bin counts
+- event density
 
 This keeps the Python monitor focused on acquisition and visualization while
 providing a deterministic feature-extraction path suitable for ARM-class edge

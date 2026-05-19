@@ -166,6 +166,7 @@ Feature columns:
 - `fall_rate_db_s`
 - `snapshots`
 - `peak_bin_count`
+- `event_density_hz`
 
 This gives a deterministic, replayable path from recorded RF samples to
 model-ready event rows.

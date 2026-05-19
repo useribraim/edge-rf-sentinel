@@ -35,6 +35,7 @@ struct BurstFeature {
     double mean_delta_db = 0.0;
     double rise_rate_db_s = 0.0;
     double fall_rate_db_s = 0.0;
+    double event_density_hz = 0.0;
     std::size_t snapshots = 0;
     std::size_t peak_bin_count = 0;
 };

@@ -206,6 +206,9 @@ BurstFeature finalize_track(const Track& track) {
     if (fall_seconds > 0.0) {
         feature.fall_rate_db_s = (last.peak_delta_db - peak_it->peak_delta_db) / fall_seconds;
     }
+    feature.event_density_hz = feature.duration_seconds > 0.0
+        ? static_cast<double>(feature.snapshots) / feature.duration_seconds
+        : static_cast<double>(feature.snapshots);
 
     return feature;
 }
@@ -380,7 +383,7 @@ void write_features_csv(
         << "start_timestamp,end_timestamp,duration_seconds,center_frequency_mhz,"
         << "min_frequency_mhz,max_frequency_mhz,cluster_width_khz,peak_power_db,"
         << "peak_delta_db,mean_power_db,mean_delta_db,rise_rate_db_s,"
-        << "fall_rate_db_s,snapshots,peak_bin_count\n";
+        << "fall_rate_db_s,snapshots,peak_bin_count,event_density_hz\n";
 
     for (const BurstFeature& feature : features) {
         output
@@ -398,7 +401,8 @@ void write_features_csv(
             << format_double(feature.rise_rate_db_s) << ','
             << format_double(feature.fall_rate_db_s) << ','
             << feature.snapshots << ','
-            << feature.peak_bin_count << '\n';
+            << feature.peak_bin_count << ','
+            << format_double(feature.event_density_hz) << '\n';
     }
 }
 

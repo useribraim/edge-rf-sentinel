@@ -12,7 +12,7 @@ void usage(const char* program) {
         << " <readings.csv> <features.csv> [cluster_khz] [max_gap_seconds]\n\n"
         << "Example:\n"
         << "  " << program
-        << " logs/rf_mobile_readings.csv features.csv 60 3\n";
+        << " logs/sessions/<session_id>/readings.csv features.csv 60 3\n";
 }
 
 }  // namespace
