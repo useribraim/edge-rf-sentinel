@@ -28,11 +28,14 @@ program can use the dongle at a time.
 python3 rf_signal_monitor.py --preset base --dashboard
 ```
 
-This preset watches a narrow example downlink-style range and writes:
+This preset watches a narrow example downlink-style range. Each run creates a
+new session directory under `logs/sessions/` and writes:
 
 ```text
-logs/rf_base_activity.csv
-logs/rf_base_readings.csv
+logs/sessions/<session_id>/readings.csv
+logs/sessions/<session_id>/activity.csv
+logs/sessions/<session_id>/activity_clusters.csv
+logs/sessions/<session_id>/observations.csv
 ```
 
 ## Run a Mobile/Burst Preset
@@ -41,11 +44,14 @@ logs/rf_base_readings.csv
 python3 rf_signal_monitor.py --preset mobile --dashboard
 ```
 
-This preset watches a narrow example uplink-style range and writes:
+This preset watches a narrow example uplink-style range and writes the same
+per-session files:
 
 ```text
-logs/rf_mobile_activity.csv
-logs/rf_mobile_readings.csv
+logs/sessions/<session_id>/readings.csv
+logs/sessions/<session_id>/activity.csv
+logs/sessions/<session_id>/activity_clusters.csv
+logs/sessions/<session_id>/observations.csv
 ```
 
 Mobile or nearby transmitters are more likely to appear as short bursts, sudden
@@ -56,25 +62,22 @@ The dashboard includes a live time-series chart for the strongest reading in
 the current `380-385 MHz` scan. The bright line is measured power and the faint
 line is the rolling baseline.
 
-When you pass something you want to correlate later, tap one of the field marker
-buttons on the dashboard:
+When you see something you want to correlate later, use the `Vehicle in sight`
+button on the dashboard. It records a labelled interval so RF activity can be
+compared before, during, and after the observation.
 
-- `Vehicle visible`
-- `Passed close`
-- `Uncertain`
-
-Markers are written to:
+Labels are written to:
 
 ```text
-logs/rf_mobile_observations.csv
+logs/sessions/<session_id>/observations.csv
 ```
 
-After a drive, compare RF readings around each marker:
+After a drive, compare RF readings around each labelled interval:
 
 ```sh
 python3 analyze_drive.py \
-  --readings logs/rf_mobile_readings.csv \
-  --observations logs/rf_mobile_observations.csv \
+  --readings logs/sessions/<session_id>/readings.csv \
+  --observations logs/sessions/<session_id>/observations.csv \
   --window-seconds 30
 ```
 
@@ -105,10 +108,10 @@ The activity log records incident state transitions:
 - `active`
 - `end`
 
-Cluster-level incident logs are written next to the activity log, for example:
+Cluster-level incident logs are written next to the activity log:
 
 ```text
-logs/rf_mobile_activity_clusters.csv
+logs/sessions/<session_id>/activity_clusters.csv
 ```
 
 Use the cluster log for post-drive review. It records one event per RF cluster
