@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RF Signal Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #090909;
+      color: #f6f2e8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #090909;
+      transition: background 200ms linear;
+    }
+    body.normal { background: #071511; }
+    body.elevated { background: #242006; }
+    body.strong { background: #331208; }
+    body.extreme {
+      background: #780606;
+      animation: pulse 900ms infinite alternate;
+    }
+    @keyframes pulse {
+      from { background: #5f0606; }
+      to { background: #b90808; }
+    }
+    main {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+      padding: 22px;
+    }
+    header, footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      font-size: clamp(14px, 2.2vw, 22px);
+      color: rgba(255,255,255,.78);
+    }
+    .mode-switch {
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 5px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      background: rgba(0,0,0,.22);
+    }
+    .mode-tab {
+      appearance: none;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: rgba(255,255,255,.72);
+      min-height: 38px;
+      padding: 0 14px;
+      font: inherit;
+      font-weight: 820;
+    }
+    .mode-tab.active {
+      background: rgba(255,244,214,.16);
+      color: #fff4d6;
+    }
+    .mode-panel.hidden {
+      display: none;
+    }
+    .hero {
+      display: grid;
+      align-content: start;
+      gap: 16px;
+      width: min(1500px, 100%);
+      margin: 0 auto;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 14px;
+      align-items: stretch;
+    }
+    .primary {
+      text-align: center;
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      min-height: 320px;
+    }
+    .status {
+      font-size: clamp(34px, 8vw, 104px);
+      line-height: .96;
+      font-weight: 850;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .power-main {
+      font-size: clamp(64px, 15vw, 180px);
+      line-height: .9;
+      font-weight: 900;
+      letter-spacing: 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .subline {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 18px;
+      color: rgba(255,255,255,.78);
+      font-size: clamp(20px, 3vw, 36px);
+      font-weight: 720;
+      font-variant-numeric: tabular-nums;
+    }
+    .freq {
+      font-size: clamp(24px, 4.8vw, 58px);
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+    }
+    .side {
+      display: grid;
+      grid-template-rows: 1fr 1fr;
+      gap: 12px;
+    }
+    .details {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 96px;
+    }
+    .label {
+      color: rgba(255,255,255,.58);
+      font-size: clamp(13px, 1.9vw, 18px);
+      margin-bottom: 6px;
+    }
+    .value {
+      font-size: clamp(24px, 4vw, 48px);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    .peak .value {
+      font-size: clamp(28px, 4vw, 56px);
+    }
+    .recent-peaks {
+      display: grid;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .peak-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px;
+      align-items: start;
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 8px;
+      background: rgba(0,0,0,.18);
+      padding: 8px 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .peak-row .peak-time {
+      color: rgba(255,255,255,.72);
+      font-size: clamp(12px, 1.3vw, 16px);
+      font-weight: 850;
+      line-height: 1.1;
+    }
+    .peak-row .peak-db {
+      color: #fff4d6;
+      grid-column: 1 / -1;
+      font-size: clamp(24px, 3.2vw, 38px);
+      font-weight: 950;
+      line-height: 1;
+      overflow-wrap: normal;
+      white-space: nowrap;
+    }
+    .peak-row .peak-age {
+      color: #fff4d6;
+      font-size: clamp(17px, 2.2vw, 27px);
+      font-weight: 950;
+      text-align: right;
+      line-height: .95;
+      white-space: nowrap;
+    }
+    .peak-row .peak-detail {
+      grid-column: 1 / -1;
+      color: rgba(255,255,255,.58);
+      font-size: clamp(11px, 1.2vw, 15px);
+      font-weight: 750;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .muted-line {
+      color: rgba(255,255,255,.62);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-wrap {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(255,255,255,.68);
+      font-size: clamp(13px, 1.8vw, 18px);
+      margin-bottom: 8px;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: clamp(460px, 52vh, 700px);
+    }
+    .time-axis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin: 8px 4px 0 56px;
+      color: rgba(255,255,255,.78);
+      font-size: clamp(12px, 1.6vw, 18px);
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+    }
+    .time-axis span {
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .marker-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .mark-button {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 8px;
+      background: rgba(255,244,214,.14);
+      color: #f6f2e8;
+      min-height: 82px;
+      font-size: clamp(24px, 3.4vw, 42px);
+      font-weight: 900;
+      font-family: inherit;
+      text-transform: uppercase;
+    }
+    .mark-button:active {
+      transform: translateY(1px);
+      background: rgba(255,255,255,.18);
+    }
+    .marker-status {
+      color: rgba(255,255,255,.68);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 650;
+      min-height: 24px;
+    }
+    .label-prompt {
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      background: rgba(0,0,0,.2);
+      color: rgba(255,255,255,.72);
+      font-size: clamp(16px, 2vw, 24px);
+      font-weight: 820;
+      padding: 14px 16px;
+      min-height: 58px;
+    }
+    .label-prompt.active {
+      border-color: rgba(88, 214, 141, .55);
+      background: rgba(25, 111, 61, .24);
+      color: #d8ffe6;
+    }
+    .label-prompt.warning {
+      border-color: rgba(255, 197, 78, .65);
+      background: rgba(125, 82, 8, .32);
+      color: #ffe4a8;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 12px;
+    }
+    .info-panel {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 150px;
+    }
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .analysis-wide {
+      grid-column: 1 / -1;
+    }
+    .analysis-list {
+      display: grid;
+      gap: 8px;
+      color: rgba(255,255,255,.82);
+      font-size: clamp(13px, 1.5vw, 18px);
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+    }
+    .analysis-row {
+      display: grid;
+      grid-template-columns: 92px 1fr 90px 90px 92px;
+      gap: 10px;
+      align-items: baseline;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding-bottom: 6px;
+    }
+    .analysis-row.wide {
+      grid-template-columns: 120px 1fr 96px 96px 96px 96px;
+    }
+    .quality-card {
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 8px;
+      padding: 16px;
+      background: rgba(0,0,0,.22);
+    }
+    .quality-card.green {
+      border-color: rgba(88, 214, 141, .55);
+      background: rgba(25, 111, 61, .22);
+    }
+    .quality-card.amber {
+      border-color: rgba(255, 197, 78, .65);
+      background: rgba(125, 82, 8, .30);
+    }
+    .quality-card.red {
+      border-color: rgba(255, 95, 95, .72);
+      background: rgba(138, 20, 20, .32);
+    }
+    .quality-title {
+      font-size: clamp(20px, 2.8vw, 34px);
+      font-weight: 900;
+      margin-bottom: 6px;
+    }
+    .pattern-summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) repeat(4, minmax(88px, 130px));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .pattern-message {
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      background: rgba(0,0,0,.20);
+      padding: 14px;
+      font-size: clamp(17px, 2.1vw, 26px);
+      font-weight: 850;
+      line-height: 1.25;
+    }
+    .pattern-count {
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      background: rgba(255,255,255,.06);
+      padding: 12px;
+      text-align: center;
+    }
+    .pattern-count strong {
+      display: block;
+      font-size: clamp(24px, 3.2vw, 42px);
+      line-height: 1;
+    }
+    .pattern-count span {
+      color: rgba(255,255,255,.62);
+      font-size: clamp(12px, 1.4vw, 16px);
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .pattern-row {
+      display: grid;
+      grid-template-columns: 132px 1fr 90px 86px 92px 108px 1.4fr;
+      gap: 10px;
+      align-items: baseline;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding-bottom: 8px;
+    }
+    .pattern-chip {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      background: rgba(255,255,255,.1);
+      color: rgba(255,255,255,.82);
+    }
+    .pattern-chip.high { background: rgba(255, 95, 95, .28); color: #ffd1d1; }
+    .pattern-chip.medium { background: rgba(255, 197, 78, .25); color: #ffe4a8; }
+    .pattern-chip.low { background: rgba(95, 180, 255, .22); color: #cfeaff; }
+    .pattern-chip.noise { background: rgba(255,255,255,.08); color: rgba(255,255,255,.62); }
+    .info-title {
+      color: rgba(255,255,255,.68);
+      font-size: clamp(14px, 1.8vw, 20px);
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .tune-list, .incident-list {
+      display: grid;
+      gap: 7px;
+      font-size: clamp(13px, 1.5vw, 18px);
+      font-weight: 650;
+      color: rgba(255,255,255,.8);
+      font-variant-numeric: tabular-nums;
+    }
+    .tune-control {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 120px;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .tune-control select,
+    .tune-control button {
+      min-height: 54px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 8px;
+      background: rgba(255,255,255,.08);
+      color: #f6f2e8;
+      font: inherit;
+      font-size: clamp(16px, 2vw, 22px);
+      font-weight: 850;
+      padding: 0 12px;
+    }
+    .tune-control button:active {
+      transform: translateY(1px);
+      background: rgba(255,255,255,.18);
+    }
+    .tune-row, .incident-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding-bottom: 5px;
+    }
+    .incident-row {
+      display: grid;
+      grid-template-columns: 78px 1fr 90px 90px;
+      align-items: baseline;
+    }
+    footer {
+      font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 700px) {
+      main { padding: 14px; gap: 12px; }
+      header, footer { align-items: flex-start; flex-direction: column; }
+      .summary { grid-template-columns: 1fr; }
+      .primary { min-height: 220px; }
+      .details { grid-template-columns: 1fr; }
+      .marker-row { grid-template-columns: 1fr; }
+      .info-grid { grid-template-columns: 1fr; }
+      .analysis-grid { grid-template-columns: 1fr; }
+      .analysis-row { grid-template-columns: 72px 1fr 70px 70px 72px; }
+      .pattern-summary { grid-template-columns: 1fr 1fr; }
+      .pattern-message { grid-column: 1 / -1; }
+      .pattern-row { grid-template-columns: 92px 1fr 70px 70px; }
+      .pattern-row span:nth-child(5),
+      .pattern-row span:nth-child(6),
+      .pattern-row span:nth-child(7) { display: none; }
+      .incident-row { grid-template-columns: 70px 1fr 78px 78px; }
+    }
+  </style>
+</head>
+<body class="normal">
+  <main>
+    <header>
+      <div>RF monitor</div>
+      <div class="mode-switch" role="tablist" aria-label="Dashboard mode">
+        <button id="detector-tab" class="mode-tab active" type="button">Signal detector</button>
+        <button id="analysis-tab" class="mode-tab" type="button">Drive analysis</button>
+      </div>
+      <div id="updated">waiting</div>
+    </header>
+    <section id="detector-mode" class="hero mode-panel">
+      <div class="summary">
+        <div class="primary">
+          <div id="status" class="status">warming</div>
+          <div id="power-main" class="power-main">---</div>
+          <div class="subline">
+            <span id="delta">+0.0 dB above baseline</span>
+            <span id="freq">---</span>
+          </div>
+        </div>
+        <div class="side">
+          <div class="metric peak">
+            <div class="label">Last 5 peaks</div>
+            <div id="recent-peaks" class="recent-peaks">
+              <div class="muted-line">no peaks yet</div>
+            </div>
+          </div>
+          <div class="metric">
+            <div class="label">Mode</div>
+            <div id="mode" class="value">mobile</div>
+            <div id="mode-meta" class="muted-line">380-385 MHz</div>
+          </div>
+        </div>
+      </div>
+      <div class="details">
+        <div class="metric">
+          <div class="label">Baseline</div>
+          <div id="baseline" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Delta</div>
+          <div id="delta-card" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Active clusters</div>
+          <div id="incidents" class="value">0</div>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-head">
+          <div>Signal over time</div>
+          <div id="chart-meta">power / baseline</div>
+        </div>
+        <canvas id="chart" width="1600" height="700"></canvas>
+        <div id="time-axis" class="time-axis">
+          <span>--:--:--</span>
+          <span>--:--:--</span>
+          <span>--:--:--</span>
+          <span>--:--:--</span>
+          <span>--:--:--</span>
+        </div>
+      </div>
+      <div class="marker-row">
+        <button class="mark-button" data-label="vehicle_in_sight">Vehicle in sight</button>
+      </div>
+      <div id="label-prompt" class="label-prompt">No vehicle label active</div>
+      <div id="marker-status" class="marker-status">No field marker yet</div>
+      <div class="info-grid">
+        <div class="info-panel">
+          <div class="info-title">Tune profile</div>
+          <div class="tune-control">
+            <select id="tune-select" aria-label="Tune profile"></select>
+            <button id="apply-tune" type="button">Set</button>
+          </div>
+          <div id="tuning" class="tune-list"></div>
+        </div>
+        <div class="info-panel">
+          <div class="info-title">Last 5 strongest incidents</div>
+          <div id="strongest-incidents" class="incident-list"></div>
+        </div>
+      </div>
+    </section>
+    <section id="analysis-mode" class="hero mode-panel hidden">
+      <div class="analysis-grid">
+        <div class="metric">
+          <div class="label">Session length</div>
+          <div id="analysis-duration" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Burst events</div>
+          <div id="analysis-events" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Vehicle labels</div>
+          <div id="analysis-labels" class="value">---</div>
+        </div>
+        <div class="metric">
+          <div class="label">Strict confirmed</div>
+          <div id="analysis-strict" class="value">---</div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Session health</div>
+          <div id="analysis-health" class="quality-card"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Burst pattern classifier</div>
+          <div id="analysis-pattern-summary"></div>
+          <div id="analysis-pattern-events" class="analysis-list" style="margin-top:12px"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">What happened in this session</div>
+          <div id="analysis-pattern-timeline" class="analysis-list"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Labelled intervals</div>
+          <div id="analysis-intervals" class="analysis-list"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Strongest burst events</div>
+          <div id="analysis-top-events" class="analysis-list"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Similar windows</div>
+          <div id="analysis-similar" class="analysis-list"></div>
+        </div>
+        <div class="info-panel analysis-wide">
+          <div class="info-title">Minute summary</div>
+          <div id="analysis-minutes" class="analysis-list"></div>
+        </div>
+      </div>
+    </section>
+    <footer>
+      <div id="range">range</div>
+      <div id="samples">samples 0</div>
+    </footer>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const chart = $("chart");
+    const ctx = chart.getContext("2d");
+    let tuneSelectionDirty = false;
+    let lastActiveTune = "";
+    let currentMode = "detector";
+    let lastAnalysisAt = 0;
+    function level(delta, threshold) {
+      if (delta >= threshold + 10) return ["extreme", "strong"];
+      if (delta >= threshold + 5) return ["strong", "burst"];
+      if (delta >= threshold) return ["elevated", "watch"];
+      return ["normal", "quiet"];
+    }
+    function smooth(series, key) {
+      return series.map((point, index) => {
+        const start = Math.max(0, index - 2);
+        const window = series.slice(start, index + 1)
+          .map((item) => item[key])
+          .filter((value) => Number.isFinite(value));
+        return window.reduce((sum, value) => sum + value, 0) / window.length;
+      });
+    }
+    function drawChart(series) {
+      const width = chart.width;
+      const height = chart.height;
+      const timeAxis = $("time-axis");
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "rgba(0,0,0,.18)";
+      ctx.fillRect(0, 0, width, height);
+
+      if (!series || series.length < 2) {
+        timeAxis.innerHTML = Array.from({ length: 5 }, () => "<span>--:--:--</span>").join("");
+        ctx.fillStyle = "rgba(255,255,255,.55)";
+        ctx.font = "28px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+        ctx.fillText("waiting for readings", 24, height / 2);
+        return;
+      }
+
+      const powerLine = smooth(series, "power_db");
+      const baselineLine = smooth(series, "baseline_db");
+      const values = [...powerLine, ...baselineLine]
+        .filter((value) => Number.isFinite(value));
+      const min = Math.min(...values) - 2;
+      const max = Math.max(...values) + 2;
+      const span = Math.max(1, max - min);
+      const plotLeft = 56;
+      const plotRight = width - 18;
+      const plotTop = 18;
+      const plotBottom = height - 36;
+      const x = (index) => plotLeft + (index / Math.max(1, series.length - 1)) * (plotRight - plotLeft);
+      const y = (value) => plotBottom - ((value - min) / span) * (plotBottom - plotTop);
+
+      ctx.strokeStyle = "rgba(255,255,255,.16)";
+      ctx.lineWidth = 1;
+      ctx.fillStyle = "rgba(255,255,255,.55)";
+      ctx.font = "18px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+      for (let i = 0; i < 4; i += 1) {
+        const gy = plotTop + i * ((plotBottom - plotTop) / 3);
+        const label = max - i * (span / 3);
+        ctx.beginPath();
+        ctx.moveTo(plotLeft, gy);
+        ctx.lineTo(plotRight, gy);
+        ctx.stroke();
+        ctx.fillText(`${label.toFixed(0)} dB`, 6, gy + 6);
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,.58)";
+      ctx.font = "16px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      const tickCount = Math.min(5, series.length);
+      const timeLabels = [];
+      for (let i = 0; i < tickCount; i += 1) {
+        const index = Math.round((i / Math.max(1, tickCount - 1)) * (series.length - 1));
+        const tx = x(index);
+        const label = String(series[index].timestamp || "");
+        timeLabels.push(label);
+        ctx.beginPath();
+        ctx.moveTo(tx, plotBottom);
+        ctx.lineTo(tx, plotBottom + 6);
+        ctx.stroke();
+        ctx.fillText(label, tx, height - 10);
+      }
+      ctx.textAlign = "start";
+      timeAxis.innerHTML = timeLabels.map((label) => `<span>${label}</span>`).join("");
+
+      function line(values, color, widthPx) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = widthPx;
+        ctx.beginPath();
+        values.forEach((value, index) => {
+          const px = x(index);
+          const py = y(value);
+          if (index === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+      }
+
+      line(baselineLine, "rgba(255,255,255,.38)", 3);
+      line(powerLine, "#fff4d6", 7);
+
+      const last = series[series.length - 1];
+      ctx.fillStyle = "#fff4d6";
+      ctx.beginPath();
+      ctx.arc(x(series.length - 1), y(powerLine[powerLine.length - 1]), 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      $("chart-meta").textContent =
+        `${series.length} samples | ${min.toFixed(1)} to ${max.toFixed(1)} dB`;
+    }
+    async function markObservation(label) {
+      const response = await fetch(`/mark?label=${encodeURIComponent(label)}`, {
+        cache: "no-store"
+      });
+      const result = await response.json();
+      if (result.event_type === "interval_start") {
+        $("marker-status").textContent = `vehicle interval started at ${result.timestamp}`;
+      } else if (result.event_type === "interval_end") {
+        $("marker-status").textContent =
+          `vehicle interval ended at ${result.timestamp} (${result.duration_seconds}s)`;
+      } else {
+        $("marker-status").textContent =
+          `marked ${result.label.replaceAll("_", " ")} at ${result.timestamp}`;
+      }
+    }
+    async function applyTune() {
+      const tune = $("tune-select").value;
+      if (!tune) return;
+      $("marker-status").textContent = `switching to ${tune.replaceAll("_", " ")} tune...`;
+      const response = await fetch(`/select-tune?tune=${encodeURIComponent(tune)}`, {
+        cache: "no-store"
+      });
+      const result = await response.json();
+      $("marker-status").textContent = result.ok
+        ? `selected ${result.tune_label}; scanner restarting`
+        : result.error || "could not change tune";
+      if (result.ok) tuneSelectionDirty = false;
+      setTimeout(() => refresh().catch(() => {}), 1200);
+    }
+    function renderTuning(tuning) {
+      const select = $("tune-select");
+      const profiles = tuning.profiles || [];
+      const selectedTune = tuning.tune || "";
+      if (profiles.length && select.dataset.loaded !== "1") {
+        select.innerHTML = profiles.map((profile) =>
+          `<option value="${profile.name}">${profile.label}</option>`
+        ).join("");
+        select.dataset.loaded = "1";
+      }
+      const activeTuneChanged = selectedTune && selectedTune !== lastActiveTune;
+      if (selectedTune && (!tuneSelectionDirty || activeTuneChanged) && select.value !== selectedTune) {
+        select.value = selectedTune;
+      }
+      if (activeTuneChanged) {
+        lastActiveTune = selectedTune;
+        tuneSelectionDirty = false;
+      }
+      const rows = [
+        ["active tune", tuning.tune_label || tuning.tune],
+        ["range", tuning.range],
+        ["interval", tuning.interval],
+        ["gain", tuning.gain],
+        ["threshold", `${Number(tuning.threshold_db).toFixed(1)} dB`],
+        ["min power", `${Number(tuning.incident_min_power_db).toFixed(1)} dB`],
+        ["confirm", `${tuning.min_incident_samples} samples`],
+        ["hold", `${tuning.hold_samples} samples`],
+        ["cluster", `${Number(tuning.cluster_khz).toFixed(0)} kHz`],
+        ["session", tuning.session_id]
+      ];
+      $("tuning").innerHTML = rows.map(([key, value]) =>
+        `<div class="tune-row"><span>${key}</span><span>${value ?? "---"}</span></div>`
+      ).join("");
+    }
+    function renderStrongestIncidents(incidents) {
+      if (!incidents || !incidents.length) {
+        $("strongest-incidents").innerHTML =
+          `<div class="muted-line">No incidents yet</div>`;
+        return;
+      }
+      $("strongest-incidents").innerHTML = incidents.slice(0, 5).map((incident) =>
+        `<div class="incident-row">
+          <span>${incident.time}</span>
+          <span>${incident.frequency_mhz.toFixed(6)} MHz</span>
+          <span>${incident.peak_power_db.toFixed(1)} dB</span>
+          <span>${incident.peak_delta_db >= 0 ? "+" : ""}${incident.peak_delta_db.toFixed(1)}</span>
+        </div>`
+      ).join("");
+    }
+    function renderRecentPeaks(peaks) {
+      if (!peaks || !peaks.length) {
+        $("recent-peaks").innerHTML = `<div class="muted-line">no peaks yet</div>`;
+        return;
+      }
+      $("recent-peaks").innerHTML = peaks.slice(0, 5).map((peak) =>
+        `<div class="peak-row">
+          <span class="peak-time">${peak.time || shortTime(peak.timestamp)}</span>
+          <span class="peak-age">${Number(peak.age_seconds || 0).toFixed(0)}s ago</span>
+          <span class="peak-db">${Number(peak.power_db).toFixed(1)} dB</span>
+          <span class="peak-detail">${Number(peak.frequency_mhz).toFixed(6)} MHz | ${Number(peak.delta_db) >= 0 ? "+" : ""}${Number(peak.delta_db).toFixed(1)} dB delta</span>
+        </div>`
+      ).join("");
+    }
+    function setMode(mode) {
+      currentMode = mode;
+      $("detector-mode").classList.toggle("hidden", mode !== "detector");
+      $("analysis-mode").classList.toggle("hidden", mode !== "analysis");
+      $("detector-tab").classList.toggle("active", mode === "detector");
+      $("analysis-tab").classList.toggle("active", mode === "analysis");
+      if (mode === "analysis") loadAnalysis().catch(() => {});
+    }
+    function fmtDb(value) {
+      return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)} dB` : "---";
+    }
+    function fmtDuration(seconds) {
+      if (!Number.isFinite(Number(seconds))) return "---";
+      const total = Math.max(0, Math.round(Number(seconds)));
+      const minutes = Math.floor(total / 60);
+      const remainder = total % 60;
+      return `${minutes}m ${remainder}s`;
+    }
+    function shortTime(timestamp) {
+      return timestamp ? String(timestamp).slice(11, 19) : "---";
+    }
+    function fmtSeconds(value) {
+      return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}s` : "---";
+    }
+    function renderReasons(reasons) {
+      return (reasons || []).length ? reasons.join(", ") : "no repeating pattern";
+    }
+    function renderAnalysis(analysis) {
+      if (!analysis || !analysis.ok || analysis.empty) {
+        $("analysis-duration").textContent = "---";
+        $("analysis-events").textContent = "---";
+        $("analysis-labels").textContent = "---";
+        $("analysis-strict").textContent = "---";
+        $("analysis-health").className = "quality-card";
+        $("analysis-health").innerHTML = `<div class="muted-line">${analysis?.message || analysis?.error || "No analysis yet"}</div>`;
+        $("analysis-pattern-summary").innerHTML = "";
+        $("analysis-pattern-events").innerHTML = "";
+        $("analysis-pattern-timeline").innerHTML = "";
+        $("analysis-intervals").innerHTML = `<div class="muted-line">${analysis?.message || analysis?.error || "No analysis yet"}</div>`;
+        $("analysis-top-events").innerHTML = "";
+        $("analysis-similar").innerHTML = "";
+        $("analysis-minutes").innerHTML = "";
+        return;
+      }
+      $("analysis-duration").textContent = fmtDuration(analysis.duration_seconds);
+      $("analysis-events").textContent = analysis.analysis_burst_event_count || analysis.burst_event_count || 0;
+      $("analysis-labels").textContent = analysis.labelled_intervals?.length || 0;
+      $("analysis-strict").textContent = analysis.strict_confirmed_incident_count || 0;
+
+      const quality = analysis.label_quality || {};
+      $("analysis-health").className = `quality-card ${quality.level || ""}`;
+      $("analysis-health").innerHTML =
+        `<div class="quality-title">${quality.label || "Session health"}</div>
+        <div class="muted-line">${quality.message || ""}</div>
+        <div class="analysis-list" style="margin-top:12px">
+          <div class="analysis-row wide">
+            <span>analysis</span>
+            <span>power >= ${fmtDb(analysis.analysis_thresholds?.power_db)} or delta >= +${Number(analysis.analysis_thresholds?.delta_db || 0).toFixed(1)} dB</span>
+            <span>${analysis.analysis_burst_event_count || analysis.burst_event_count || 0} bursts</span>
+            <span>${analysis.strict_confirmed_incident_count || 0} strict</span>
+            <span>${fmtDb(analysis.summary?.max_power_db)}</span>
+            <span>+${Number(analysis.summary?.max_delta_db || 0).toFixed(1)}</span>
+          </div>
+        </div>`;
+
+      const pattern = analysis.pattern_summary || {};
+      const counts = pattern.counts || {};
+      $("analysis-pattern-summary").innerHTML =
+        `<div class="pattern-summary">
+          <div class="pattern-message">${pattern.message || "No classifier result yet."}</div>
+          <div class="pattern-count"><strong>${counts.high || 0}</strong><span>high</span></div>
+          <div class="pattern-count"><strong>${counts.medium || 0}</strong><span>medium</span></div>
+          <div class="pattern-count"><strong>${counts.low || 0}</strong><span>low</span></div>
+          <div class="pattern-count"><strong>${counts.noise || 0}</strong><span>one-off</span></div>
+        </div>`;
+
+      const patternEvents = analysis.pattern_events || [];
+      $("analysis-pattern-events").innerHTML = patternEvents.length ? patternEvents.map((event) => {
+        const cls = event.classification || {};
+        return `<div class="pattern-row">
+          <span>${shortTime(event.start)}-${shortTime(event.end)}</span>
+          <span><span class="pattern-chip ${cls.level || "noise"}">${cls.label || "unclassified"}</span></span>
+          <span>${cls.score ?? 0}/100</span>
+          <span>${fmtDb(event.peak_power_db)}</span>
+          <span>+${Number(event.max_delta_db || event.peak_delta_db || 0).toFixed(1)}</span>
+          <span>${fmtSeconds(event.seconds_since_previous_burst)}</span>
+          <span>${renderReasons(cls.reasons)}</span>
+        </div>`;
+      }).join("") : `<div class="muted-line">No burst-pattern events to review.</div>`;
+
+      const timeline = analysis.pattern_timeline || [];
+      $("analysis-pattern-timeline").innerHTML = timeline.length ? timeline.map((window) =>
+        `<div class="pattern-row">
+          <span>${shortTime(window.start)}-${shortTime(window.end)}</span>
+          <span><span class="pattern-chip ${window.dominant_level || "noise"}">${window.dominant_level || "noise"}</span></span>
+          <span>${window.best_score ?? 0}/100</span>
+          <span>${fmtDb(window.strongest_power_db)}</span>
+          <span>+${Number(window.max_delta_db || 0).toFixed(1)}</span>
+          <span>${window.count || 0} bursts</span>
+          <span>${Number(window.top_frequency_mhz || 0).toFixed(6)} MHz</span>
+        </div>`
+      ).join("") : `<div class="muted-line">No notable activity windows found.</div>`;
+
+      const intervals = analysis.labelled_intervals || [];
+      $("analysis-intervals").innerHTML = intervals.length ? intervals.map((item) =>
+        `<div class="analysis-row wide">
+          <span>${shortTime(item.start)}</span>
+          <span>${item.end ? shortTime(item.end) : "active"}</span>
+          <span>${fmtDuration(item.duration_seconds)}</span>
+          <span>${fmtDb(item.summary?.max_power_db)}</span>
+          <span>+${Number(item.summary?.max_delta_db || 0).toFixed(1)}</span>
+          <span>${item.summary?.count_ge_minus_20_db || 0} hits</span>
+        </div>`
+      ).join("") : `<div class="muted-line">No labels captured. Use Vehicle in sight in detector mode when a relevant vehicle is visible.</div>`;
+
+      const events = analysis.top_events || [];
+      $("analysis-top-events").innerHTML = events.length ? events.slice(0, 10).map((event) =>
+        `<div class="analysis-row wide">
+          <span>${shortTime(event.peak_time)}</span>
+          <span>${event.peak_frequency_mhz.toFixed(6)} MHz</span>
+          <span>${fmtDb(event.peak_power_db)}</span>
+          <span>+${Number(event.max_delta_db || event.peak_delta_db).toFixed(1)}</span>
+          <span>${fmtDuration(event.duration_seconds)}</span>
+          <span>${event.count_ge_minus_20_db || 0}/${event.count_ge_plus_26_delta || 0}</span>
+        </div>`
+      ).join("") : `<div class="muted-line">No burst events yet</div>`;
+
+      const similar = analysis.similar_events || [];
+      $("analysis-similar").innerHTML = intervals.length
+        ? (similar.length ? similar.map((event) =>
+          `<div class="analysis-row wide">
+            <span>${shortTime(event.peak_time)}</span>
+            <span>${event.peak_frequency_mhz.toFixed(6)} MHz</span>
+            <span>${fmtDb(event.peak_power_db)}</span>
+            <span>+${Number(event.max_delta_db || event.peak_delta_db).toFixed(1)}</span>
+            <span>${fmtDuration(event.duration_seconds)}</span>
+            <span>${event.count_ge_minus_20_db || 0}/${event.count_ge_plus_26_delta || 0}</span>
+          </div>`
+        ).join("") : `<div class="muted-line">No unlabelled windows were similar to the labelled interval.</div>`)
+        : `<div class="muted-line">Similar-window comparison needs at least one labelled vehicle interval.</div>`;
+
+      const minutes = analysis.minute_summary || [];
+      $("analysis-minutes").innerHTML = minutes.slice(-20).map((minute) =>
+        `<div class="analysis-row wide">
+          <span>${minute.minute}</span>
+          <span>${minute.samples} samples</span>
+          <span>${fmtDb(minute.max_power_db)}</span>
+          <span>+${Number(minute.max_delta_db || 0).toFixed(1)}</span>
+          <span>${minute.count_ge_minus_20_db || 0} hits</span>
+          <span>${(minute.top_frequencies || [])[0]?.frequency_mhz || "---"}</span>
+        </div>`
+      ).join("");
+    }
+    async function loadAnalysis() {
+      const now = Date.now();
+      if (now - lastAnalysisAt < 4000) return;
+      lastAnalysisAt = now;
+      const response = await fetch("/analysis", { cache: "no-store" });
+      renderAnalysis(await response.json());
+    }
+    $("detector-tab").addEventListener("click", () => setMode("detector"));
+    $("analysis-tab").addEventListener("click", () => setMode("analysis"));
+    document.querySelectorAll(".mark-button").forEach((button) => {
+      button.addEventListener("click", () => markObservation(button.dataset.label));
+    });
+    $("tune-select").addEventListener("change", () => {
+      tuneSelectionDirty = true;
+    });
+    $("apply-tune").addEventListener("click", () => applyTune().catch(() => {
+      $("marker-status").textContent = "could not change tune";
+    }));
+    async function refresh() {
+      const response = await fetch("/state", { cache: "no-store" });
+      const state = await response.json();
+      const top = state.strongest && state.strongest.length ? state.strongest[0] : null;
+      const active = state.active_incidents || [];
+      const main = active.length ? active[0] : top;
+      const delta = main && Number.isFinite(main.delta_db) ? main.delta_db : 0;
+      const power = main && Number.isFinite(main.power_db) ? main.power_db : -999;
+      const threshold = state.threshold_db || 8;
+      const absoluteStrong = state.absolute_strong_db ?? -12;
+      const absoluteExtreme = state.absolute_extreme_db ?? -8;
+      let [className, label] = level(delta, threshold);
+      if (power >= absoluteExtreme) [className, label] = ["extreme", "extreme"];
+      else if (power >= absoluteStrong && className === "normal") [className, label] = ["strong", "strong"];
+
+      document.body.className = className;
+      $("status").textContent = state.sample_count < state.warmup_samples ? "warming" : label;
+      $("power-main").textContent = main ? `${main.power_db.toFixed(1)} dB` : "---";
+      $("delta").textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB above baseline`;
+      $("delta-card").textContent = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB`;
+      $("freq").textContent = main ? `${main.frequency_mhz.toFixed(6)} MHz` : "---";
+      $("baseline").textContent = main && Number.isFinite(main.baseline_db) ? `${main.baseline_db.toFixed(1)} dB` : "---";
+      $("incidents").textContent = active.length;
+      renderRecentPeaks(state.recent_peaks || []);
+      const tuning = state.tuning || {};
+      $("mode").textContent = tuning.tune_label || (state.range === "380M:385M:25k" ? "mobile" : "custom");
+      $("mode-meta").textContent = `${state.range || ""} | gain ${tuning.gain ?? "---"} | threshold ${Number(tuning.threshold_db || 0).toFixed(1)} dB`;
+      $("updated").textContent = state.updated_at || "waiting";
+      $("range").textContent = state.range || "";
+      $("samples").textContent = `samples ${state.sample_count || 0}`;
+      const markerButton = document.querySelector(".mark-button");
+      if (markerButton) {
+        markerButton.textContent = state.vehicle_interval_active
+          ? "Vehicle no longer in sight"
+          : "Vehicle in sight";
+      }
+      const prompt = $("label-prompt");
+      if (prompt) {
+        if (state.vehicle_interval_active) {
+          prompt.className = "label-prompt active";
+          prompt.textContent = `Vehicle interval recording since ${shortTime(state.vehicle_interval_started_at)}`;
+        } else if (state.label_prompt) {
+          prompt.className = "label-prompt warning";
+          prompt.textContent = state.label_prompt;
+        } else {
+          prompt.className = "label-prompt";
+          prompt.textContent = "No vehicle label active";
+        }
+      }
+      renderTuning(tuning);
+      renderStrongestIncidents(state.strongest_incidents || []);
+      drawChart(state.series || []);
+      if (currentMode === "analysis") loadAnalysis().catch(() => {});
+    }
+    refresh().catch(() => {});
+    setInterval(() => refresh().catch(() => {}), 1000);
+  </script>
+</body>
+</html>
