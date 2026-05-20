@@ -191,17 +191,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--activity-log",
         default=None,
-        help="CSV file for timestamped incidents. Default: logs/rf_activity.csv",
+        help="CSV file for timestamped incidents. Default: <session-dir>/activity.csv",
     )
     parser.add_argument(
         "--readings-log",
         default=None,
-        help="CSV file for strongest readings each scan row. Default: logs/rf_readings.csv",
+        help="CSV file for strongest readings each scan row. Default: <session-dir>/readings.csv",
     )
     parser.add_argument(
         "--observations-log",
         default=None,
-        help="CSV file for manual field markers. Default: logs/rf_observations.csv",
+        help="CSV file for manual field markers. Default: <session-dir>/observations.csv",
     )
     parser.add_argument(
         "--session-dir",
