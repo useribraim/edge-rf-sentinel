@@ -24,7 +24,6 @@ from edge_rf.csv_logs import (
     open_observations_log,
     open_readings_log,
     sanitize_label,
-    write_activity,
     write_cluster_activity,
     write_reading,
 )
@@ -1565,7 +1564,6 @@ def monitor(args: argparse.Namespace) -> int:
     baselines: dict[int, deque[float]] = defaultdict(
         lambda: deque(maxlen=args.baseline_samples)
     )
-    incidents: dict[int, dict[str, object]] = {}
     sample_count = 0
     activity_fp, activity_writer = open_activity_log(Path(args.activity_log))
     cluster_activity_path = Path(args.activity_log).with_name(
@@ -1752,7 +1750,6 @@ def monitor(args: argparse.Namespace) -> int:
 
                 apply_tune(args, tune_to_apply)
                 baselines.clear()
-                incidents.clear()
                 cluster_tracks.clear()
                 next_cluster_track_id = 1
                 sample_count = 0
@@ -1839,116 +1836,6 @@ def monitor(args: argparse.Namespace) -> int:
                         candidate_bins.append(
                             reading_payload(freq_hz, power_db, baseline, delta)
                         )
-                    history.append(power_db)
-                    continue
-                    incident = incidents.get(freq_hz)
-
-                    if is_high and incident is None:
-                        incidents[freq_hz] = {
-                            "start": now,
-                            "peak_power": power_db,
-                            "peak_delta": delta,
-                            "below_count": 0,
-                        }
-                        write_activity(
-                            activity_writer,
-                            event="start",
-                            timestamp=now,
-                            freq_hz=freq_hz,
-                            power_db=power_db,
-                            baseline_db=baseline,
-                            delta_db=delta,
-                            threshold_db=args.threshold_db,
-                            incident_min_power_db=args.incident_min_power_db,
-                            incident_start=now,
-                            peak_power_db=power_db,
-                            peak_delta_db=delta,
-                        )
-                        activity_fp.flush()
-                        recent_events.appendleft(
-                            {
-                                "event": "start",
-                                "timestamp": now.isoformat(timespec="seconds"),
-                                **reading_payload(freq_hz, power_db, baseline, delta),
-                            }
-                        )
-                        print(
-                            f"INCIDENT START {now.isoformat(timespec='seconds')} "
-                            f"{format_freq(freq_hz)} {power_db:.1f} dB "
-                            f"baseline {baseline:.1f} dB +{delta:.1f} dB"
-                        )
-                    elif is_high and incident is not None:
-                        incident["below_count"] = 0
-                        incident["peak_power"] = max(float(incident["peak_power"]), power_db)
-                        incident["peak_delta"] = max(float(incident["peak_delta"]), delta)
-                        write_activity(
-                            activity_writer,
-                            event="active",
-                            timestamp=now,
-                            freq_hz=freq_hz,
-                            power_db=power_db,
-                            baseline_db=baseline,
-                            delta_db=delta,
-                            threshold_db=args.threshold_db,
-                            incident_min_power_db=args.incident_min_power_db,
-                            incident_start=incident["start"],
-                            peak_power_db=float(incident["peak_power"]),
-                            peak_delta_db=float(incident["peak_delta"]),
-                        )
-                        activity_fp.flush()
-                    elif incident is not None:
-                        incident["below_count"] = int(incident["below_count"]) + 1
-                        if int(incident["below_count"]) >= args.hold_samples:
-                            ended_incident = {
-                                "time": now.strftime("%H:%M:%S"),
-                                "timestamp": now.isoformat(timespec="seconds"),
-                                "frequency_mhz": freq_hz / 1_000_000,
-                                "duration_seconds": (
-                                    now - incident["start"]
-                                ).total_seconds(),
-                                "peak_power_db": float(incident["peak_power"]),
-                                "peak_delta_db": float(incident["peak_delta"]),
-                            }
-                            strongest_incidents.append(ended_incident)
-                            strongest_incidents = sorted(
-                                strongest_incidents,
-                                key=lambda item: float(item["peak_power_db"]),
-                                reverse=True,
-                            )[:5]
-                            write_activity(
-                                activity_writer,
-                                event="end",
-                                timestamp=now,
-                                freq_hz=freq_hz,
-                                power_db=power_db,
-                                baseline_db=baseline,
-                                delta_db=delta,
-                                threshold_db=args.threshold_db,
-                                incident_min_power_db=args.incident_min_power_db,
-                                incident_start=incident["start"],
-                                peak_power_db=float(incident["peak_power"]),
-                                peak_delta_db=float(incident["peak_delta"]),
-                            )
-                            activity_fp.flush()
-                            recent_events.appendleft(
-                                {
-                                    "event": "end",
-                                    "timestamp": now.isoformat(timespec="seconds"),
-                                    "duration_seconds": (
-                                        now - incident["start"]
-                                    ).total_seconds(),
-                                    **reading_payload(freq_hz, power_db, baseline, delta),
-                                    "peak_delta_db": float(incident["peak_delta"]),
-                                }
-                            )
-                            print(
-                                f"INCIDENT END {now.isoformat(timespec='seconds')} "
-                                f"{format_freq(freq_hz)} duration "
-                                f"{(now - incident['start']).total_seconds():.0f}s "
-                                f"peak +{float(incident['peak_delta']):.1f} dB"
-                            )
-                            del incidents[freq_hz]
-
                     history.append(power_db)
 
                 strongest = sorted(
@@ -2071,22 +1958,6 @@ def monitor(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
-        final_time = dt.datetime.now().astimezone()
-        for freq_hz, incident in list(incidents.items()):
-            write_activity(
-                activity_writer,
-                event="end",
-                timestamp=final_time,
-                freq_hz=freq_hz,
-                power_db=float("nan"),
-                baseline_db=float("nan"),
-                delta_db=float("nan"),
-                threshold_db=args.threshold_db,
-                incident_min_power_db=args.incident_min_power_db,
-                incident_start=incident["start"],
-                peak_power_db=float(incident["peak_power"]),
-                peak_delta_db=float(incident["peak_delta"]),
-            )
         activity_fp.flush()
         activity_fp.close()
         cluster_activity_fp.flush()
