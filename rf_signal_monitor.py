@@ -393,6 +393,39 @@ def tuning_payload(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def dashboard_config_payload(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "threshold_db": args.threshold_db,
+        "incident_min_power_db": args.incident_min_power_db,
+        "warmup_samples": args.warmup_samples,
+        "range": args.range,
+        "absolute_strong_db": args.absolute_strong_db,
+        "absolute_extreme_db": args.absolute_extreme_db,
+        "cluster_khz": args.cluster_khz,
+        "tuning": tuning_payload(args),
+        "demo": args.demo,
+    }
+
+
+def dashboard_reset_payload(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        **dashboard_config_payload(args),
+        "pending_tune": None,
+        "sample_count": 0,
+        "strongest": [],
+        "active_incidents": [],
+        "active_bins": [],
+        "recent_events": [],
+        "strongest_incidents": [],
+        "series": [],
+        "recent_peak": None,
+        "recent_peaks": [],
+        "status": "warming",
+        "message": "Building baseline",
+        "label_prompt": "",
+    }
+
+
 def monitor(args: argparse.Namespace) -> int:
     if not args.demo:
         require_rtl_power()
@@ -520,15 +553,7 @@ def monitor(args: argparse.Namespace) -> int:
 
     dashboard_state = DashboardState()
     dashboard_state.update(
-        threshold_db=args.threshold_db,
-        incident_min_power_db=args.incident_min_power_db,
-        warmup_samples=args.warmup_samples,
-        range=args.range,
-        absolute_strong_db=args.absolute_strong_db,
-        absolute_extreme_db=args.absolute_extreme_db,
-        cluster_khz=args.cluster_khz,
-        tuning=tuning_payload(args),
-        demo=args.demo,
+        **dashboard_config_payload(args),
         vehicle_interval_active=False,
         vehicle_interval_started_at=None,
         label_prompt="",
@@ -603,28 +628,7 @@ def monitor(args: argparse.Namespace) -> int:
                 process = None if args.demo else start_rtl_power(args, output_path)
                 last_size = 0
                 dashboard_state.update(
-                    threshold_db=args.threshold_db,
-                    incident_min_power_db=args.incident_min_power_db,
-                    warmup_samples=args.warmup_samples,
-                    range=args.range,
-                    absolute_strong_db=args.absolute_strong_db,
-                    absolute_extreme_db=args.absolute_extreme_db,
-                    cluster_khz=args.cluster_khz,
-                    tuning=tuning_payload(args),
-                    pending_tune=None,
-                    sample_count=0,
-                    strongest=[],
-                    active_incidents=[],
-                    active_bins=[],
-                    recent_events=[],
-                    strongest_incidents=[],
-                    series=[],
-                    recent_peak=None,
-                    recent_peaks=[],
-                    status="warming",
-                    message="Building baseline",
-                    demo=args.demo,
-                    label_prompt="",
+                    **dashboard_reset_payload(args),
                 )
                 print(
                     f"Switched tune to {TUNE_PROFILES[tune_to_apply]['label']} "
