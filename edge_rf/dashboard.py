@@ -55,30 +55,38 @@ def start_dashboard(
         def log_message(self, format: str, *args: object) -> None:
             return
 
+        def _send_body(
+            self,
+            status: int,
+            content_type: str,
+            body: bytes,
+        ) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json(self, payload: object, status: int = 200) -> None:
+            self._send_body(
+                status,
+                "application/json",
+                json.dumps(payload).encode("utf-8"),
+            )
+
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
 
             if parsed.path == "/state":
-                body = json.dumps(state.snapshot()).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json(state.snapshot())
                 return
 
             if parsed.path == "/mark":
                 params = parse_qs(parsed.query)
                 label = params.get("label", ["manual_marker"])[0]
                 marker = mark_observation(label)
-                body = json.dumps(marker).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json(marker)
                 return
 
             if parsed.path == "/select-tune":
@@ -86,35 +94,17 @@ def start_dashboard(
                 tune = params.get("tune", [""])[0]
                 result = select_tune(tune)
                 status = 200 if result.get("ok") else 400
-                body = json.dumps(result).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json(result, status)
                 return
 
             if parsed.path == "/analysis":
                 result = load_analysis()
                 status = 200 if result.get("ok") else 500
-                body = json.dumps(result).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_json(result, status)
                 return
 
             if parsed.path in {"/", "/index.html"}:
-                body = dashboard_html()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_body(200, "text/html; charset=utf-8", dashboard_html())
                 return
 
             self.send_error(404)
