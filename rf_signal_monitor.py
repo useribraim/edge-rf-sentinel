@@ -426,6 +426,29 @@ def dashboard_reset_payload(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def new_power_output_path() -> Path:
+    with tempfile.NamedTemporaryFile(prefix="rf_power_", suffix=".csv", delete=False) as fp:
+        return Path(fp.name)
+
+
+def stop_process(process) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def delete_temp_file(path: Path) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
 def monitor(args: argparse.Namespace) -> int:
     if not args.demo:
         require_rtl_power()
@@ -571,8 +594,7 @@ def monitor(args: argparse.Namespace) -> int:
         )
         print(f"Dashboard: http://{args.dashboard_host}:{args.dashboard_port}")
 
-    with tempfile.NamedTemporaryFile(prefix="rf_power_", suffix=".csv", delete=False) as fp:
-        output_path = Path(fp.name)
+    output_path = new_power_output_path()
 
     if args.demo:
         print(f"Demo mode: simulating {args.range}; no SDR hardware is required.")
@@ -597,17 +619,8 @@ def monitor(args: argparse.Namespace) -> int:
                 pending_tune["name"] = None
 
             if tune_to_apply:
-                if process is not None and process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
-                try:
-                    os.unlink(output_path)
-                except FileNotFoundError:
-                    pass
+                stop_process(process)
+                delete_temp_file(output_path)
 
                 apply_tune(args, tune_to_apply)
                 baselines.clear()
@@ -621,10 +634,7 @@ def monitor(args: argparse.Namespace) -> int:
                 strongest_incidents.clear()
                 recent_events.clear()
 
-                with tempfile.NamedTemporaryFile(
-                    prefix="rf_power_", suffix=".csv", delete=False
-                ) as fp:
-                    output_path = Path(fp.name)
+                output_path = new_power_output_path()
                 process = None if args.demo else start_rtl_power(args, output_path)
                 last_size = 0
                 dashboard_state.update(
@@ -806,16 +816,8 @@ def monitor(args: argparse.Namespace) -> int:
         readings_fp.close()
         observations_fp.flush()
         observations_fp.close()
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-        try:
-            os.unlink(output_path)
-        except FileNotFoundError:
-            pass
+        stop_process(process)
+        delete_temp_file(output_path)
         if dashboard_server is not None:
             dashboard_server.shutdown()
 
