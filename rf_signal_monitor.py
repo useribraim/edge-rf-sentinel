@@ -24,7 +24,12 @@ from edge_rf.csv_logs import (
     write_cluster_activity,
     write_reading,
 )
-from edge_rf.dashboard import DashboardState, start_dashboard
+from edge_rf.dashboard import (
+    DashboardState,
+    dashboard_config_payload,
+    dashboard_reset_payload,
+    start_dashboard,
+)
 from edge_rf.detection import (
     cluster_candidate_bins,
     cluster_readings,
@@ -41,7 +46,7 @@ from edge_rf.scanner import (
     require_rtl_power,
     start_rtl_power,
 )
-from edge_rf.tuning import TUNE_PROFILES, apply_tune, tune_values, tuning_payload
+from edge_rf.tuning import TUNE_PROFILES, apply_tune, tune_values
 
 
 def parse_args() -> argparse.Namespace:
@@ -305,39 +310,6 @@ def apply_session_paths(
     if not explicit_logs["observations_log"]:
         args.observations_log = str(session_dir / "observations.csv")
     return args
-
-
-def dashboard_config_payload(args: argparse.Namespace) -> dict[str, object]:
-    return {
-        "threshold_db": args.threshold_db,
-        "incident_min_power_db": args.incident_min_power_db,
-        "warmup_samples": args.warmup_samples,
-        "range": args.range,
-        "absolute_strong_db": args.absolute_strong_db,
-        "absolute_extreme_db": args.absolute_extreme_db,
-        "cluster_khz": args.cluster_khz,
-        "tuning": tuning_payload(args),
-        "demo": args.demo,
-    }
-
-
-def dashboard_reset_payload(args: argparse.Namespace) -> dict[str, object]:
-    return {
-        **dashboard_config_payload(args),
-        "pending_tune": None,
-        "sample_count": 0,
-        "strongest": [],
-        "active_incidents": [],
-        "active_bins": [],
-        "recent_events": [],
-        "strongest_incidents": [],
-        "series": [],
-        "recent_peak": None,
-        "recent_peaks": [],
-        "status": "warming",
-        "message": "Building baseline",
-        "label_prompt": "",
-    }
 
 
 def new_power_output_path() -> Path:

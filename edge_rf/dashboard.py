@@ -8,6 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from edge_rf.tuning import tuning_payload
+
 
 class DashboardState:
     def __init__(self) -> None:
@@ -41,6 +43,39 @@ class DashboardState:
 
 def dashboard_html() -> bytes:
     return (Path(__file__).resolve().parent / "dashboard.html").read_bytes()
+
+
+def dashboard_config_payload(args) -> dict[str, object]:
+    return {
+        "threshold_db": args.threshold_db,
+        "incident_min_power_db": args.incident_min_power_db,
+        "warmup_samples": args.warmup_samples,
+        "range": args.range,
+        "absolute_strong_db": args.absolute_strong_db,
+        "absolute_extreme_db": args.absolute_extreme_db,
+        "cluster_khz": args.cluster_khz,
+        "tuning": tuning_payload(args),
+        "demo": args.demo,
+    }
+
+
+def dashboard_reset_payload(args) -> dict[str, object]:
+    return {
+        **dashboard_config_payload(args),
+        "pending_tune": None,
+        "sample_count": 0,
+        "strongest": [],
+        "active_incidents": [],
+        "active_bins": [],
+        "recent_events": [],
+        "strongest_incidents": [],
+        "series": [],
+        "recent_peak": None,
+        "recent_peaks": [],
+        "status": "warming",
+        "message": "Building baseline",
+        "label_prompt": "",
+    }
 
 
 def start_dashboard(
