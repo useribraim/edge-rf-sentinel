@@ -20,7 +20,6 @@ from edge_rf.csv_logs import (
     open_cluster_activity_log,
     open_observations_log,
     open_readings_log,
-    sanitize_label,
     write_cluster_activity,
     write_reading,
 )
@@ -39,6 +38,7 @@ from edge_rf.detection import (
     update_cluster_tracks,
     update_recent_peaks,
 )
+from edge_rf.observations import ObservationTracker
 from edge_rf.scanner import (
     demo_power_row,
     format_freq,
@@ -365,74 +365,25 @@ def monitor(args: argparse.Namespace) -> int:
     latest_top_reading: dict[str, object] | None = None
     pending_tune: dict[str, str | None] = {"name": None}
     pending_tune_lock = threading.Lock()
-    active_vehicle_interval: dict[str, object] | None = None
+    observation_tracker = ObservationTracker()
 
     def mark_observation(label: str) -> dict[str, object]:
-        nonlocal latest_top_reading, recent_peak, sample_count, active_vehicle_interval
-        now = dt.datetime.now().astimezone()
-        safe_label = sanitize_label(label)
-        current = latest_top_reading or {}
-        peak = recent_peak or {}
-        event_type = "point"
-        interval_id = ""
-        interval_start = ""
-        interval_end = ""
-        duration_seconds = ""
-        display_label = safe_label
-
-        if safe_label == "vehicle_in_sight":
-            if active_vehicle_interval is None:
-                interval_id = now.strftime("%Y%m%d_%H%M%S")
-                interval_start = now.isoformat(timespec="seconds")
-                active_vehicle_interval = {
-                    "id": interval_id,
-                    "start": now,
-                    "label": "vehicle_nearby",
-                }
-                event_type = "interval_start"
-                display_label = "vehicle_nearby"
-            else:
-                interval_id = str(active_vehicle_interval["id"])
-                start = active_vehicle_interval["start"]
-                interval_start = start.isoformat(timespec="seconds")
-                interval_end = now.isoformat(timespec="seconds")
-                duration_seconds = f"{(now - start).total_seconds():.0f}"
-                event_type = "interval_end"
-                display_label = str(active_vehicle_interval["label"])
-                active_vehicle_interval = None
-
-        marker = {
-            "timestamp": now.isoformat(timespec="seconds"),
-            "label": display_label,
-            "event_type": event_type,
-            "interval_id": interval_id,
-            "interval_start": interval_start,
-            "interval_end": interval_end,
-            "duration_seconds": duration_seconds,
-            "note": "",
-            "range": args.range,
-            "sample": sample_count,
-            "current_frequency_mhz": current.get("frequency_mhz", ""),
-            "current_power_db": current.get("power_db", ""),
-            "current_baseline_db": current.get("baseline_db", ""),
-            "current_delta_db": current.get("delta_db", ""),
-            "recent_peak_frequency_mhz": peak.get("frequency_mhz", ""),
-            "recent_peak_power_db": peak.get("power_db", ""),
-            "recent_peak_delta_db": peak.get("delta_db", ""),
-        }
+        marker = observation_tracker.mark(
+            label,
+            signal_range=args.range,
+            sample_count=sample_count,
+            current_reading=latest_top_reading,
+            recent_peak=recent_peak,
+        )
         observations_writer.writerow(marker)
         observations_fp.flush()
         recent_observations.appendleft(marker)
         dashboard_state.update(
             recent_observations=list(recent_observations),
-            vehicle_interval_active=active_vehicle_interval is not None,
-            vehicle_interval_started_at=(
-                active_vehicle_interval["start"].isoformat(timespec="seconds")
-                if active_vehicle_interval is not None
-                else None
-            ),
+            vehicle_interval_active=observation_tracker.vehicle_interval_active(),
+            vehicle_interval_started_at=observation_tracker.vehicle_interval_started_at(),
         )
-        print(f"MARK {marker['timestamp']} {display_label} {event_type}")
+        print(f"MARK {marker['timestamp']} {marker['label']} {marker['event_type']}")
         return marker
 
     def select_tune(tune_name: str) -> dict[str, object]:
