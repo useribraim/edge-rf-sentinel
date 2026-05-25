@@ -44,6 +44,13 @@ class ClusterTrack(TypedDict):
     peak_frequency_mhz: float
 
 
+class ClusterActivityRecord(TypedDict):
+    event: str
+    timestamp: dt.datetime
+    cluster: dict[str, object]
+    track: ClusterTrack
+
+
 def reading_payload(
     freq_hz: int,
     power_db: float,
@@ -198,6 +205,132 @@ def cluster_candidate_bins(
     return grouped
 
 
+def find_matching_track_id(
+    *,
+    tracks: dict[int, ClusterTrack],
+    matched_track_ids: set[int],
+    cluster_center_hz: float,
+    cluster_hz: float,
+) -> int | None:
+    best_id: int | None = None
+    best_distance_hz = float("inf")
+
+    for track_id, track in tracks.items():
+        if track_id in matched_track_ids:
+            continue
+        distance_hz = abs(cluster_center_hz - float(track["center_hz"]))
+        if distance_hz <= cluster_hz and distance_hz < best_distance_hz:
+            best_id = track_id
+            best_distance_hz = distance_hz
+
+    return best_id
+
+
+def new_cluster_track(
+    *,
+    track_id: int,
+    cluster: CandidateCluster,
+    cluster_center_hz: float,
+    now: dt.datetime,
+) -> ClusterTrack:
+    return ClusterTrack(
+        id=track_id,
+        start=now,
+        last_seen=now,
+        center_hz=cluster_center_hz,
+        candidate_count=0,
+        below_count=0,
+        confirmed=False,
+        peak_power=float(cluster["power_db"]),
+        peak_delta=float(cluster["delta_db"]),
+        peak_frequency_mhz=float(cluster["frequency_mhz"]),
+    )
+
+
+def update_track_from_cluster(
+    track: ClusterTrack,
+    cluster: CandidateCluster,
+    cluster_center_hz: float,
+    now: dt.datetime,
+) -> None:
+    track["last_seen"] = now
+    track["center_hz"] = (float(track["center_hz"]) + cluster_center_hz) / 2
+    track["candidate_count"] = int(track["candidate_count"]) + 1
+    track["below_count"] = 0
+
+    if float(cluster["power_db"]) > float(track["peak_power"]):
+        track["peak_power"] = float(cluster["power_db"])
+        track["peak_frequency_mhz"] = float(cluster["frequency_mhz"])
+    track["peak_delta"] = max(float(track["peak_delta"]), float(cluster["delta_db"]))
+
+
+def active_cluster_payload(
+    *,
+    cluster: CandidateCluster,
+    track: ClusterTrack,
+    track_id: int,
+    now: dt.datetime,
+) -> dict[str, object]:
+    return {
+        **cluster,
+        "started_at": track["start"].isoformat(timespec="seconds"),
+        "duration_seconds": (now - track["start"]).total_seconds(),
+        "peak_power_db": float(track["peak_power"]),
+        "peak_delta_db": float(track["peak_delta"]),
+        "track_id": track_id,
+    }
+
+
+def fallback_cluster_for_track(track: ClusterTrack) -> dict[str, object]:
+    center_mhz = float(track["center_hz"]) / 1_000_000
+    return {
+        "center_frequency_mhz": center_mhz,
+        "frequency_mhz": float(track["peak_frequency_mhz"]),
+        "cluster_low_mhz": center_mhz,
+        "cluster_high_mhz": center_mhz,
+        "cluster_width_khz": 0.0,
+        "bin_count": 0,
+        "power_db": float("nan"),
+        "baseline_db": float("nan"),
+        "delta_db": float("nan"),
+    }
+
+
+def strongest_incident_payload(
+    *,
+    track: ClusterTrack,
+    now: dt.datetime,
+) -> dict[str, object]:
+    return {
+        "time": now.strftime("%H:%M:%S"),
+        "timestamp": now.isoformat(timespec="seconds"),
+        "frequency_mhz": float(track["peak_frequency_mhz"]),
+        "duration_seconds": (now - track["start"]).total_seconds(),
+        "peak_power_db": float(track["peak_power"]),
+        "peak_delta_db": float(track["peak_delta"]),
+    }
+
+
+def write_cluster_record(
+    *,
+    record: ClusterActivityRecord,
+    cluster_writer: csv.DictWriter,
+    cluster_fp,
+    threshold_db: float,
+    incident_min_power_db: float,
+) -> None:
+    write_cluster_activity(
+        cluster_writer,
+        event=record["event"],
+        timestamp=record["timestamp"],
+        cluster=record["cluster"],
+        track=record["track"],
+        threshold_db=threshold_db,
+        incident_min_power_db=incident_min_power_db,
+    )
+    cluster_fp.flush()
+
+
 def update_cluster_tracks(
     *,
     tracks: dict[int, ClusterTrack],
@@ -214,79 +347,63 @@ def update_cluster_tracks(
     cluster_hz = args.cluster_khz * 1_000
 
     for cluster in candidate_clusters:
-        best_id: int | None = None
-        best_distance_hz = float("inf")
         cluster_center_hz = float(cluster["center_frequency_mhz"]) * 1_000_000
-
-        for track_id, track in tracks.items():
-            if track_id in matched_track_ids:
-                continue
-            distance_hz = abs(cluster_center_hz - float(track["center_hz"]))
-            if distance_hz <= cluster_hz and distance_hz < best_distance_hz:
-                best_id = track_id
-                best_distance_hz = distance_hz
+        best_id = find_matching_track_id(
+            tracks=tracks,
+            matched_track_ids=matched_track_ids,
+            cluster_center_hz=cluster_center_hz,
+            cluster_hz=cluster_hz,
+        )
 
         if best_id is None:
             best_id = next_track_id
             next_track_id += 1
-            tracks[best_id] = ClusterTrack(
-                id=best_id,
-                start=now,
-                last_seen=now,
-                center_hz=cluster_center_hz,
-                candidate_count=0,
-                below_count=0,
-                confirmed=False,
-                peak_power=float(cluster["power_db"]),
-                peak_delta=float(cluster["delta_db"]),
-                peak_frequency_mhz=float(cluster["frequency_mhz"]),
+            tracks[best_id] = new_cluster_track(
+                track_id=best_id,
+                cluster=cluster,
+                cluster_center_hz=cluster_center_hz,
+                now=now,
             )
 
         track = tracks[best_id]
         matched_track_ids.add(best_id)
-        track["last_seen"] = now
-        track["center_hz"] = (float(track["center_hz"]) + cluster_center_hz) / 2
-        track["candidate_count"] = int(track["candidate_count"]) + 1
-        track["below_count"] = 0
-
-        if float(cluster["power_db"]) > float(track["peak_power"]):
-            track["peak_power"] = float(cluster["power_db"])
-            track["peak_frequency_mhz"] = float(cluster["frequency_mhz"])
-        track["peak_delta"] = max(float(track["peak_delta"]), float(cluster["delta_db"]))
+        update_track_from_cluster(track, cluster, cluster_center_hz, now)
 
         if not bool(track["confirmed"]) and int(track["candidate_count"]) >= args.min_incident_samples:
             track["confirmed"] = True
-            write_cluster_activity(
-                cluster_writer,
-                event="start",
-                timestamp=now,
-                cluster=cluster,
-                track=track,
+            write_cluster_record(
+                record={
+                    "event": "start",
+                    "timestamp": now,
+                    "cluster": cluster,
+                    "track": track,
+                },
+                cluster_writer=cluster_writer,
+                cluster_fp=cluster_fp,
                 threshold_db=args.threshold_db,
                 incident_min_power_db=args.incident_min_power_db,
             )
-            cluster_fp.flush()
 
         if bool(track["confirmed"]):
-            write_cluster_activity(
-                cluster_writer,
-                event="active",
-                timestamp=now,
-                cluster=cluster,
-                track=track,
+            write_cluster_record(
+                record={
+                    "event": "active",
+                    "timestamp": now,
+                    "cluster": cluster,
+                    "track": track,
+                },
+                cluster_writer=cluster_writer,
+                cluster_fp=cluster_fp,
                 threshold_db=args.threshold_db,
                 incident_min_power_db=args.incident_min_power_db,
             )
-            cluster_fp.flush()
             active_clusters.append(
-                {
-                    **cluster,
-                    "started_at": track["start"].isoformat(timespec="seconds"),
-                    "duration_seconds": (now - track["start"]).total_seconds(),
-                    "peak_power_db": float(track["peak_power"]),
-                    "peak_delta_db": float(track["peak_delta"]),
-                    "track_id": best_id,
-                }
+                active_cluster_payload(
+                    cluster=cluster,
+                    track=track,
+                    track_id=best_id,
+                    now=now,
+                )
             )
 
     ended: list[int] = []
@@ -296,36 +413,20 @@ def update_cluster_tracks(
         track["below_count"] = int(track["below_count"]) + 1
         if int(track["below_count"]) >= args.hold_samples:
             if bool(track["confirmed"]):
-                fallback_cluster = {
-                    "center_frequency_mhz": float(track["center_hz"]) / 1_000_000,
-                    "frequency_mhz": float(track["peak_frequency_mhz"]),
-                    "cluster_low_mhz": float(track["center_hz"]) / 1_000_000,
-                    "cluster_high_mhz": float(track["center_hz"]) / 1_000_000,
-                    "cluster_width_khz": 0.0,
-                    "bin_count": 0,
-                    "power_db": float("nan"),
-                    "baseline_db": float("nan"),
-                    "delta_db": float("nan"),
-                }
-                write_cluster_activity(
-                    cluster_writer,
-                    event="end",
-                    timestamp=now,
-                    cluster=fallback_cluster,
-                    track=track,
+                write_cluster_record(
+                    record={
+                        "event": "end",
+                        "timestamp": now,
+                        "cluster": fallback_cluster_for_track(track),
+                        "track": track,
+                    },
+                    cluster_writer=cluster_writer,
+                    cluster_fp=cluster_fp,
                     threshold_db=args.threshold_db,
                     incident_min_power_db=args.incident_min_power_db,
                 )
-                cluster_fp.flush()
                 strongest_incidents.append(
-                    {
-                        "time": now.strftime("%H:%M:%S"),
-                        "timestamp": now.isoformat(timespec="seconds"),
-                        "frequency_mhz": float(track["peak_frequency_mhz"]),
-                        "duration_seconds": (now - track["start"]).total_seconds(),
-                        "peak_power_db": float(track["peak_power"]),
-                        "peak_delta_db": float(track["peak_delta"]),
-                    }
+                    strongest_incident_payload(track=track, now=now)
                 )
             ended.append(track_id)
 
