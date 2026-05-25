@@ -6,8 +6,42 @@ import argparse
 import csv
 import datetime as dt
 from collections import deque
+from typing import TypedDict
 
 from edge_rf.csv_logs import write_cluster_activity
+
+
+class ReadingPayload(TypedDict):
+    frequency_hz: int
+    frequency_mhz: float
+    power_db: float
+    baseline_db: float
+    delta_db: float
+
+
+class CandidateCluster(TypedDict):
+    center_frequency_mhz: float
+    frequency_mhz: float
+    cluster_low_mhz: float
+    cluster_high_mhz: float
+    cluster_width_khz: float
+    bin_count: int
+    power_db: float
+    baseline_db: float
+    delta_db: float
+
+
+class ClusterTrack(TypedDict):
+    id: int
+    start: dt.datetime
+    last_seen: dt.datetime
+    center_hz: float
+    candidate_count: int
+    below_count: int
+    confirmed: bool
+    peak_power: float
+    peak_delta: float
+    peak_frequency_mhz: float
 
 
 def reading_payload(
@@ -15,7 +49,7 @@ def reading_payload(
     power_db: float,
     baseline_db: float,
     delta_db: float,
-) -> dict[str, float | int]:
+) -> ReadingPayload:
     return {
         "frequency_hz": freq_hz,
         "frequency_mhz": freq_hz / 1_000_000,
@@ -26,7 +60,7 @@ def reading_payload(
 
 
 def peak_payload(
-    reading: dict[str, float | int],
+    reading: ReadingPayload,
     timestamp: dt.datetime,
 ) -> dict[str, object]:
     return {
@@ -84,17 +118,12 @@ def recent_peaks_payload(
     ]
 
 
-def cluster_readings(
+def group_by_frequency_gap(
     readings: list[dict[str, object]],
     cluster_hz: float,
-) -> list[dict[str, object]]:
-    if not readings:
-        return []
-
-    sorted_readings = sorted(readings, key=lambda item: int(item["frequency_hz"]))
+) -> list[list[dict[str, object]]]:
     clusters: list[list[dict[str, object]]] = []
-
-    for reading in sorted_readings:
+    for reading in sorted(readings, key=lambda item: int(item["frequency_hz"])):
         if not clusters:
             clusters.append([reading])
             continue
@@ -104,9 +133,18 @@ def cluster_readings(
             clusters[-1].append(reading)
         else:
             clusters.append([reading])
+    return clusters
+
+
+def cluster_readings(
+    readings: list[dict[str, object]],
+    cluster_hz: float,
+) -> list[dict[str, object]]:
+    if not readings:
+        return []
 
     grouped: list[dict[str, object]] = []
-    for cluster in clusters:
+    for cluster in group_by_frequency_gap(readings, cluster_hz):
         strongest = max(cluster, key=lambda item: float(item["power_db"]))
         peak_delta = max(float(item["delta_db"]) for item in cluster)
         peak_power = max(float(item["power_db"]) for item in cluster)
@@ -130,28 +168,14 @@ def cluster_readings(
 
 
 def cluster_candidate_bins(
-    readings: list[dict[str, float | int]],
+    readings: list[ReadingPayload],
     cluster_hz: float,
-) -> list[dict[str, object]]:
+) -> list[CandidateCluster]:
     if not readings:
         return []
 
-    sorted_readings = sorted(readings, key=lambda item: int(item["frequency_hz"]))
-    clusters: list[list[dict[str, float | int]]] = []
-
-    for reading in sorted_readings:
-        if not clusters:
-            clusters.append([reading])
-            continue
-
-        previous = clusters[-1][-1]
-        if int(reading["frequency_hz"]) - int(previous["frequency_hz"]) <= cluster_hz:
-            clusters[-1].append(reading)
-        else:
-            clusters.append([reading])
-
-    grouped: list[dict[str, object]] = []
-    for cluster in clusters:
+    grouped: list[CandidateCluster] = []
+    for cluster in group_by_frequency_gap(readings, cluster_hz):
         strongest = max(cluster, key=lambda item: float(item["power_db"]))
         center = sum(float(item["frequency_mhz"]) for item in cluster) / len(cluster)
         low = int(cluster[0]["frequency_hz"]) / 1_000_000
@@ -176,8 +200,8 @@ def cluster_candidate_bins(
 
 def update_cluster_tracks(
     *,
-    tracks: dict[int, dict[str, object]],
-    candidate_clusters: list[dict[str, object]],
+    tracks: dict[int, ClusterTrack],
+    candidate_clusters: list[CandidateCluster],
     now: dt.datetime,
     args: argparse.Namespace,
     next_track_id: int,
@@ -205,18 +229,18 @@ def update_cluster_tracks(
         if best_id is None:
             best_id = next_track_id
             next_track_id += 1
-            tracks[best_id] = {
-                "id": best_id,
-                "start": now,
-                "last_seen": now,
-                "center_hz": cluster_center_hz,
-                "candidate_count": 0,
-                "below_count": 0,
-                "confirmed": False,
-                "peak_power": float(cluster["power_db"]),
-                "peak_delta": float(cluster["delta_db"]),
-                "peak_frequency_mhz": float(cluster["frequency_mhz"]),
-            }
+            tracks[best_id] = ClusterTrack(
+                id=best_id,
+                start=now,
+                last_seen=now,
+                center_hz=cluster_center_hz,
+                candidate_count=0,
+                below_count=0,
+                confirmed=False,
+                peak_power=float(cluster["power_db"]),
+                peak_delta=float(cluster["delta_db"]),
+                peak_frequency_mhz=float(cluster["frequency_mhz"]),
+            )
 
         track = tracks[best_id]
         matched_track_ids.add(best_id)
