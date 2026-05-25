@@ -544,31 +544,11 @@ def collapse_burst_events(
     return events
 
 
-def load_drive_analysis(
-    readings_path: Path,
-    observations_path: Path,
-) -> dict[str, object]:
-    if not readings_path.exists():
-        return {"ok": False, "error": f"readings file not found: {readings_path}"}
-
-    rank1: list[dict[str, object]] = []
-    with readings_path.open(newline="") as fp:
-        for row in csv.DictReader(fp):
-            parsed = parse_rank1_row(row)
-            if parsed is not None:
-                rank1.append(parsed)
-
-    if not rank1:
-        return {"ok": True, "empty": True, "message": "No readings yet"}
-
-    observations: list[dict[str, object]] = []
-    if observations_path.exists():
-        with observations_path.open(newline="") as fp:
-            for row in csv.DictReader(fp):
-                parsed = parse_observation_row(row)
-                if parsed is not None:
-                    observations.append(parsed)
-
+def build_labelled_intervals(
+    *,
+    observations: list[dict[str, object]],
+    rank1: list[dict[str, object]],
+) -> list[dict[str, object]]:
     intervals: list[dict[str, object]] = []
     open_intervals: dict[str, dict[str, object]] = {}
     for obs in observations:
@@ -607,7 +587,87 @@ def load_drive_analysis(
                 "summary": summarize_rank1_window(rows),
             }
         )
+    return intervals
 
+
+def top_ranked_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        events,
+        key=lambda item: (
+            int(item["classification"]["score"]),
+            float(item["peak_power_db"]),
+            int(item["count_ge_minus_20_db"]),
+            int(item["count_ge_plus_26_delta"]),
+            float(item["duration_seconds"]),
+        ),
+        reverse=True,
+    )[:10]
+
+
+def sustained_ranked_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        events,
+        key=lambda item: (
+            int(item["count_ge_minus_20_db"]),
+            int(item["count_ge_plus_26_delta"]),
+            float(item["duration_seconds"]),
+            float(item["peak_power_db"]),
+        ),
+        reverse=True,
+    )[:10]
+
+
+def pattern_ranked_events(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        events,
+        key=lambda item: (
+            int(item["classification"]["score"]),
+            float(item["peak_power_db"]),
+            float(item["max_delta_db"]),
+        ),
+        reverse=True,
+    )[:20]
+
+
+def build_minute_summary(rank1: list[dict[str, object]]) -> list[dict[str, object]]:
+    minute_rows: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in rank1:
+        minute_rows[row["dt"].strftime("%H:%M")].append(row)
+    return [
+        {
+            "minute": minute,
+            **summarize_rank1_window(rows),
+        }
+        for minute, rows in sorted(minute_rows.items())
+    ]
+
+
+def load_drive_analysis(
+    readings_path: Path,
+    observations_path: Path,
+) -> dict[str, object]:
+    if not readings_path.exists():
+        return {"ok": False, "error": f"readings file not found: {readings_path}"}
+
+    rank1: list[dict[str, object]] = []
+    with readings_path.open(newline="") as fp:
+        for row in csv.DictReader(fp):
+            parsed = parse_rank1_row(row)
+            if parsed is not None:
+                rank1.append(parsed)
+
+    if not rank1:
+        return {"ok": True, "empty": True, "message": "No readings yet"}
+
+    observations: list[dict[str, object]] = []
+    if observations_path.exists():
+        with observations_path.open(newline="") as fp:
+            for row in csv.DictReader(fp):
+                parsed = parse_observation_row(row)
+                if parsed is not None:
+                    observations.append(parsed)
+
+    intervals = build_labelled_intervals(observations=observations, rank1=rank1)
     session_start_dt = rank1[0]["dt"]
     events = [
         event
@@ -619,38 +679,9 @@ def load_drive_analysis(
     ]
     events = enrich_burst_patterns(events, intervals)
     pattern_summary = summarize_burst_patterns(events)
-    top_events = sorted(
-        events,
-        key=lambda item: (
-            int(item["classification"]["score"]),
-            float(item["peak_power_db"]),
-            int(item["count_ge_minus_20_db"]),
-            int(item["count_ge_plus_26_delta"]),
-            float(item["duration_seconds"]),
-        ),
-        reverse=True,
-    )[:10]
-    sustained_events = sorted(
-        events,
-        key=lambda item: (
-            int(item["count_ge_minus_20_db"]),
-            int(item["count_ge_plus_26_delta"]),
-            float(item["duration_seconds"]),
-            float(item["peak_power_db"]),
-        ),
-        reverse=True,
-    )[:10]
-
-    minute_rows: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for row in rank1:
-        minute_rows[row["dt"].strftime("%H:%M")].append(row)
-    minute_summary = [
-        {
-            "minute": minute,
-            **summarize_rank1_window(rows),
-        }
-        for minute, rows in sorted(minute_rows.items())
-    ]
+    top_events = top_ranked_events(events)
+    sustained_events = sustained_ranked_events(events)
+    minute_summary = build_minute_summary(rank1)
 
     cluster_path = readings_path.with_name("activity_clusters.csv")
     duration_seconds = (rank1[-1]["dt"] - rank1[0]["dt"]).total_seconds()
@@ -693,15 +724,7 @@ def load_drive_analysis(
         "burst_event_count": len(events),
         "top_events": top_events,
         "pattern_summary": pattern_summary,
-        "pattern_events": sorted(
-            events,
-            key=lambda item: (
-                int(item["classification"]["score"]),
-                float(item["peak_power_db"]),
-                float(item["max_delta_db"]),
-            ),
-            reverse=True,
-        )[:20],
+        "pattern_events": pattern_ranked_events(events),
         "pattern_timeline": build_pattern_timeline(events),
         "sustained_events": sustained_events,
         "similar_events": similar_events_to_labels(events, intervals),

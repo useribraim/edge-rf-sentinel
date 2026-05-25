@@ -17,6 +17,54 @@ from edge_rf.observations import ObservationTracker
 from edge_rf.scanner import parse_power_row, parse_range_spec
 
 
+READINGS_FIELDS = [
+    "timestamp",
+    "sample",
+    "rank",
+    "frequency_hz",
+    "frequency_mhz",
+    "power_db",
+    "baseline_db",
+    "delta_db",
+    "threshold_db",
+    "incident_min_power_db",
+    "is_incident",
+]
+
+
+def write_readings_fixture(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=READINGS_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_observations_fixture(path: Path, rows: list[dict[str, str]]) -> None:
+    fieldnames = ["timestamp", "event_type"]
+    with path.open("w", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def valid_reading_row(**overrides: str) -> dict[str, str]:
+    row = {
+        "timestamp": "2026-05-25T12:00:00+00:00",
+        "sample": "1",
+        "rank": "1",
+        "frequency_hz": "390000000",
+        "frequency_mhz": "390.000000",
+        "power_db": "-40.00",
+        "baseline_db": "-42.00",
+        "delta_db": "2.00",
+        "threshold_db": "8.00",
+        "incident_min_power_db": "-20.00",
+        "is_incident": "0",
+    }
+    row.update(overrides)
+    return row
+
+
 class ObservationTrackerTests(unittest.TestCase):
     def test_vehicle_marker_toggles_interval(self) -> None:
         tracker = ObservationTracker()
@@ -121,43 +169,17 @@ class AnalysisTests(unittest.TestCase):
             tmp_path = Path(tmp)
             readings_path = tmp_path / "readings.csv"
             observations_path = tmp_path / "observations.csv"
-            fieldnames = [
-                "timestamp",
-                "sample",
-                "rank",
-                "frequency_hz",
-                "frequency_mhz",
-                "power_db",
-                "baseline_db",
-                "delta_db",
-                "threshold_db",
-                "incident_min_power_db",
-                "is_incident",
-            ]
-            with readings_path.open("w", newline="") as fp:
-                writer = csv.DictWriter(fp, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerow(
-                    {
-                        "timestamp": "2026-05-25T12:00:00+00:00",
-                        "sample": "1",
-                        "rank": "1",
-                        "frequency_hz": "390000000",
-                        "frequency_mhz": "390.000000",
-                        "power_db": "-40.00",
-                        "baseline_db": "-42.00",
-                        "delta_db": "2.00",
-                        "threshold_db": "8.00",
-                        "incident_min_power_db": "-20.00",
-                        "is_incident": "0",
-                    }
-                )
-                writer.writerow({"timestamp": "bad", "sample": "x", "rank": "1"})
-
-            with observations_path.open("w", newline="") as fp:
-                writer = csv.DictWriter(fp, fieldnames=["timestamp", "event_type"])
-                writer.writeheader()
-                writer.writerow({"timestamp": "not-a-time", "event_type": "point"})
+            write_readings_fixture(
+                readings_path,
+                [
+                    valid_reading_row(),
+                    {"timestamp": "bad", "sample": "x", "rank": "1"},
+                ],
+            )
+            write_observations_fixture(
+                observations_path,
+                [{"timestamp": "not-a-time", "event_type": "point"}],
+            )
 
             result = load_drive_analysis(readings_path, observations_path)
 
