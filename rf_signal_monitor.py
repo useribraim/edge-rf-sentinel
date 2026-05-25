@@ -8,6 +8,7 @@ import csv
 import datetime as dt
 import os
 import statistics
+import subprocess
 import tempfile
 import threading
 import time
@@ -15,12 +16,11 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 from edge_rf.analysis import load_drive_analysis
+from edge_rf.config import apply_preset_defaults, apply_session_paths
 from edge_rf.csv_logs import (
-    open_activity_log,
     open_cluster_activity_log,
     open_observations_log,
     open_readings_log,
-    write_cluster_activity,
     write_reading,
 )
 from edge_rf.dashboard import (
@@ -30,8 +30,9 @@ from edge_rf.dashboard import (
     start_dashboard,
 )
 from edge_rf.detection import (
+    ClusterTrack,
+    ReadingPayload,
     cluster_candidate_bins,
-    cluster_readings,
     peak_payload,
     reading_payload,
     recent_peaks_payload,
@@ -41,12 +42,11 @@ from edge_rf.detection import (
 from edge_rf.observations import ObservationTracker
 from edge_rf.scanner import (
     demo_power_row,
-    format_freq,
     parse_power_row,
     require_rtl_power,
     start_rtl_power,
 )
-from edge_rf.tuning import TUNE_PROFILES, apply_tune, tune_values
+from edge_rf.tuning import TUNE_PROFILES, apply_tune
 
 
 def parse_args() -> argparse.Namespace:
@@ -226,92 +226,6 @@ def parse_args() -> argparse.Namespace:
     return apply_session_paths(args, explicit_logs)
 
 
-def apply_preset_defaults(args: argparse.Namespace) -> argparse.Namespace:
-    presets = {
-        "base": {
-            "range": "390M:395M:25k",
-            "interval": "1s",
-            "gain": "30",
-            "threshold_db": 8.0,
-            "incident_min_power_db": -20.0,
-            "activity_log": "logs/rf_base_activity.csv",
-            "readings_log": "logs/rf_base_readings.csv",
-            "observations_log": "logs/rf_base_observations.csv",
-            "absolute_strong_db": -10.0,
-            "absolute_extreme_db": -5.0,
-            "cluster_khz": 60.0,
-            "hold_samples": 3,
-            "min_incident_samples": 3,
-        },
-        "mobile": {
-            "range": "380M:385M:25k",
-            "interval": "1s",
-            "gain": "8.7",
-            "threshold_db": 26.0,
-            "incident_min_power_db": -10.0,
-            "activity_log": "logs/rf_mobile_activity.csv",
-            "readings_log": "logs/rf_mobile_readings.csv",
-            "observations_log": "logs/rf_mobile_observations.csv",
-            "absolute_strong_db": -8.0,
-            "absolute_extreme_db": -4.0,
-            "cluster_khz": 100.0,
-            "hold_samples": 12,
-            "min_incident_samples": 12,
-        },
-    }
-    defaults = {
-        "range": "390M:395M:25k",
-        "interval": "5s",
-        "gain": "auto",
-        "threshold_db": 8.0,
-        "incident_min_power_db": -20.0,
-        "activity_log": "logs/rf_activity.csv",
-        "readings_log": "logs/rf_readings.csv",
-        "observations_log": "logs/rf_observations.csv",
-        "absolute_strong_db": -10.0,
-        "absolute_extreme_db": -5.0,
-        "cluster_khz": 60.0,
-        "hold_samples": 3,
-        "min_incident_samples": 3,
-    }
-    selected = dict(presets.get(args.preset or "", defaults))
-    if args.tune:
-        selected.update(tune_values(args.tune))
-
-    for key, fallback in defaults.items():
-        value = getattr(args, key)
-        if value is None:
-            setattr(args, key, selected.get(key, fallback))
-
-    args.tune = args.tune or ("strict" if args.preset == "mobile" else "custom")
-    return args
-
-
-def apply_session_paths(
-    args: argparse.Namespace,
-    explicit_logs: dict[str, bool],
-) -> argparse.Namespace:
-    session_id = dt.datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
-    mode = args.preset or "rf"
-    args.session_id = f"{session_id}_{mode}"
-    session_dir = Path(args.session_dir) if args.session_dir else Path("logs/sessions") / args.session_id
-    args.session_dir = str(session_dir)
-
-    if not any(explicit_logs.values()):
-        args.activity_log = str(session_dir / "activity.csv")
-        args.readings_log = str(session_dir / "readings.csv")
-        args.observations_log = str(session_dir / "observations.csv")
-        return args
-
-    if not explicit_logs["activity_log"]:
-        args.activity_log = str(session_dir / "activity.csv")
-    if not explicit_logs["readings_log"]:
-        args.readings_log = str(session_dir / "readings.csv")
-    if not explicit_logs["observations_log"]:
-        args.observations_log = str(session_dir / "observations.csv")
-    return args
-
-
 def new_power_output_path() -> Path:
     with tempfile.NamedTemporaryFile(prefix="rf_power_", suffix=".csv", delete=False) as fp:
         return Path(fp.name)
@@ -335,6 +249,155 @@ def delete_temp_file(path: Path) -> None:
         pass
 
 
+def build_readings(
+    *,
+    bins: list[tuple[int, float]],
+    baselines: dict[int, deque[float]],
+    sample_count: int,
+    args: argparse.Namespace,
+) -> tuple[list[ReadingPayload], list[ReadingPayload]]:
+    enriched: list[ReadingPayload] = []
+    candidate_bins: list[ReadingPayload] = []
+    is_warm = sample_count > args.warmup_samples
+
+    for freq_hz, power_db in bins:
+        history = baselines[freq_hz]
+        baseline = statistics.median(history) if history else power_db
+        delta = power_db - baseline
+        reading = reading_payload(freq_hz, power_db, baseline, delta)
+        enriched.append(reading)
+        if (
+            is_warm
+            and delta >= args.threshold_db
+            and power_db >= args.incident_min_power_db
+        ):
+            candidate_bins.append(reading)
+        history.append(power_db)
+
+    return enriched, candidate_bins
+
+
+def update_signal_summary(
+    *,
+    strongest: list[ReadingPayload],
+    now: dt.datetime,
+    sample_count: int,
+    warmup_samples: int,
+    recent_peak: dict[str, object] | None,
+    recent_peaks: deque[dict[str, object]],
+    series: deque[dict[str, object]],
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    if not strongest:
+        return None, recent_peak
+
+    top_reading = strongest[0]
+    latest_top_reading = {
+        "frequency_mhz": float(top_reading["frequency_mhz"]),
+        "power_db": float(top_reading["power_db"]),
+        "baseline_db": float(top_reading["baseline_db"]),
+        "delta_db": float(top_reading["delta_db"]),
+    }
+    if recent_peak is None or float(top_reading["power_db"]) > float(
+        recent_peak["power_db"]
+    ):
+        recent_peak = {
+            "timestamp": now,
+            **latest_top_reading,
+        }
+    if sample_count > warmup_samples and float(top_reading["power_db"]) >= -25.0:
+        update_recent_peaks(recent_peaks, peak_payload(top_reading, now))
+    series.append(
+        {
+            "timestamp": now.strftime("%H:%M:%S"),
+            **latest_top_reading,
+        }
+    )
+    return latest_top_reading, recent_peak
+
+
+def write_top_readings(
+    *,
+    readings_writer: csv.DictWriter,
+    readings_fp,
+    strongest: list[ReadingPayload],
+    candidate_bins: list[ReadingPayload],
+    now: dt.datetime,
+    sample_count: int,
+    args: argparse.Namespace,
+) -> None:
+    candidate_freqs = {reading["frequency_hz"] for reading in candidate_bins}
+    for rank, reading in enumerate(strongest[: args.log_top], start=1):
+        write_reading(
+            readings_writer,
+            timestamp=now,
+            sample_count=sample_count,
+            rank=rank,
+            reading=reading,
+            threshold_db=args.threshold_db,
+            incident_min_power_db=args.incident_min_power_db,
+            is_incident=reading["frequency_hz"] in candidate_freqs,
+        )
+    readings_fp.flush()
+
+
+def label_prompt_for(
+    *,
+    sample_count: int,
+    args: argparse.Namespace,
+    observation_tracker: ObservationTracker,
+    latest_top_reading: dict[str, object] | None,
+) -> str:
+    if (
+        sample_count > args.warmup_samples
+        and not observation_tracker.vehicle_interval_active()
+        and latest_top_reading is not None
+        and (
+            float(latest_top_reading["power_db"]) >= -20.0
+            or float(latest_top_reading["delta_db"]) >= 20.0
+        )
+    ):
+        return "Label if vehicle is visible"
+    return ""
+
+
+def dashboard_payload(
+    *,
+    now: dt.datetime,
+    sample_count: int,
+    strongest: list[ReadingPayload],
+    active_clusters: list[dict[str, object]],
+    candidate_bins: list[ReadingPayload],
+    recent_observations: deque[dict[str, object]],
+    strongest_incidents: list[dict[str, object]],
+    recent_peaks: deque[dict[str, object]],
+    label_prompt: str,
+    series: deque[dict[str, object]],
+    recent_peak: dict[str, object] | None,
+) -> dict[str, object]:
+    return {
+        "updated_at": now.isoformat(timespec="seconds"),
+        "sample_count": sample_count,
+        "strongest": strongest,
+        "active_incidents": active_clusters,
+        "active_bins": candidate_bins,
+        "recent_events": [],
+        "recent_observations": list(recent_observations),
+        "strongest_incidents": strongest_incidents,
+        "recent_peaks": recent_peaks_payload(recent_peaks, now),
+        "label_prompt": label_prompt,
+        "series": list(series),
+        "recent_peak": {
+            **recent_peak,
+            "timestamp": recent_peak["timestamp"].isoformat(timespec="seconds"),
+            "age_seconds": (now - recent_peak["timestamp"]).total_seconds(),
+        }
+        if recent_peak is not None
+        else None,
+        "status": "active" if active_clusters else "normal",
+        "message": "Active incident" if active_clusters else "Monitoring",
+    }
+
+
 def monitor(args: argparse.Namespace) -> int:
     if not args.demo:
         require_rtl_power()
@@ -343,7 +406,6 @@ def monitor(args: argparse.Namespace) -> int:
         lambda: deque(maxlen=args.baseline_samples)
     )
     sample_count = 0
-    activity_fp, activity_writer = open_activity_log(Path(args.activity_log))
     cluster_activity_path = Path(args.activity_log).with_name(
         f"{Path(args.activity_log).stem}_clusters.csv"
     )
@@ -354,11 +416,10 @@ def monitor(args: argparse.Namespace) -> int:
     observations_fp, observations_writer = open_observations_log(
         Path(args.observations_log)
     )
-    recent_events: deque[dict[str, object]] = deque(maxlen=20)
     recent_observations: deque[dict[str, object]] = deque(maxlen=20)
     series: deque[dict[str, object]] = deque(maxlen=180)
     strongest_incidents: list[dict[str, object]] = []
-    cluster_tracks: dict[int, dict[str, object]] = {}
+    cluster_tracks: dict[int, ClusterTrack] = {}
     next_cluster_track_id = 1
     recent_peak: dict[str, object] | None = None
     recent_peaks: deque[dict[str, object]] = deque(maxlen=5)
@@ -439,7 +500,6 @@ def monitor(args: argparse.Namespace) -> int:
         print(f"Monitoring {args.range}; writing temporary rtl_power CSV to {output_path}")
     print(f"Session: {args.session_id}")
     print(f"Session directory: {Path(args.session_dir).resolve()}")
-    print(f"Recording incidents to {Path(args.activity_log).resolve()}")
     print(f"Recording cluster incidents to {cluster_activity_path.resolve()}")
     print(f"Recording strongest readings to {Path(args.readings_log).resolve()}")
     print(f"Recording field markers to {Path(args.observations_log).resolve()}")
@@ -469,7 +529,6 @@ def monitor(args: argparse.Namespace) -> int:
                 latest_top_reading = None
                 series.clear()
                 strongest_incidents.clear()
-                recent_events.clear()
 
                 output_path = new_power_output_path()
                 process = None if args.demo else start_rtl_power(args, output_path)
@@ -505,98 +564,46 @@ def monitor(args: argparse.Namespace) -> int:
 
                 sample_count += 1
                 now = dt.datetime.now().astimezone()
-                enriched: list[dict[str, float | int]] = []
-                candidate_bins: list[dict[str, float | int]] = []
-
-                for freq_hz, power_db in bins:
-                    history = baselines[freq_hz]
-                    baseline = statistics.median(history) if history else power_db
-                    delta = power_db - baseline
-                    enriched.append(reading_payload(freq_hz, power_db, baseline, delta))
-                    is_warm = sample_count > args.warmup_samples
-                    is_high = (
-                        is_warm
-                        and delta >= args.threshold_db
-                        and power_db >= args.incident_min_power_db
-                    )
-                    if is_high:
-                        candidate_bins.append(
-                            reading_payload(freq_hz, power_db, baseline, delta)
-                        )
-                    history.append(power_db)
+                enriched, candidate_bins = build_readings(
+                    bins=bins,
+                    baselines=baselines,
+                    sample_count=sample_count,
+                    args=args,
+                )
 
                 strongest = sorted(
                     enriched,
                     key=lambda item: float(item["power_db"]),
                     reverse=True,
                 )[: args.top]
-                if strongest:
-                    top_reading = strongest[0]
-                    latest_top_reading = {
-                        "frequency_mhz": float(top_reading["frequency_mhz"]),
-                        "power_db": float(top_reading["power_db"]),
-                        "baseline_db": float(top_reading["baseline_db"]),
-                        "delta_db": float(top_reading["delta_db"]),
-                    }
-                    if (
-                        recent_peak is None
-                        or float(top_reading["power_db"]) > float(recent_peak["power_db"])
-                    ):
-                        recent_peak = {
-                            "timestamp": now,
-                            "frequency_mhz": float(top_reading["frequency_mhz"]),
-                            "power_db": float(top_reading["power_db"]),
-                            "baseline_db": float(top_reading["baseline_db"]),
-                            "delta_db": float(top_reading["delta_db"]),
-                        }
-                    is_peak_sample = (
-                        sample_count > args.warmup_samples
-                        and float(top_reading["power_db"]) >= -25.0
-                    )
-                    if is_peak_sample:
-                        update_recent_peaks(
-                            recent_peaks,
-                            peak_payload(top_reading, now),
-                        )
-                    series.append(
-                        {
-                            "timestamp": now.strftime("%H:%M:%S"),
-                            "frequency_mhz": float(top_reading["frequency_mhz"]),
-                            "power_db": float(top_reading["power_db"]),
-                            "baseline_db": float(top_reading["baseline_db"]),
-                            "delta_db": float(top_reading["delta_db"]),
-                        }
-                    )
-                candidate_freqs = {
-                    int(reading["frequency_hz"]) for reading in candidate_bins
-                }
-                for rank, reading in enumerate(strongest[: args.log_top], start=1):
-                    write_reading(
-                        readings_writer,
-                        timestamp=now,
-                        sample_count=sample_count,
-                        rank=rank,
-                        reading=reading,
-                        threshold_db=args.threshold_db,
-                        incident_min_power_db=args.incident_min_power_db,
-                        is_incident=int(reading["frequency_hz"]) in candidate_freqs,
-                    )
-                readings_fp.flush()
+                latest_top_reading, recent_peak = update_signal_summary(
+                    strongest=strongest,
+                    now=now,
+                    sample_count=sample_count,
+                    warmup_samples=args.warmup_samples,
+                    recent_peak=recent_peak,
+                    recent_peaks=recent_peaks,
+                    series=series,
+                )
+                write_top_readings(
+                    readings_writer=readings_writer,
+                    readings_fp=readings_fp,
+                    strongest=strongest,
+                    candidate_bins=candidate_bins,
+                    now=now,
+                    sample_count=sample_count,
+                    args=args,
+                )
                 candidate_clusters = cluster_candidate_bins(
                     candidate_bins,
                     args.cluster_khz * 1_000,
                 )
-                label_prompt = ""
-                if (
-                    sample_count > args.warmup_samples
-                    and active_vehicle_interval is None
-                    and latest_top_reading is not None
-                    and (
-                        float(latest_top_reading["power_db"]) >= -20.0
-                        or float(latest_top_reading["delta_db"]) >= 20.0
-                    )
-                ):
-                    label_prompt = "Label if vehicle is visible"
+                label_prompt = label_prompt_for(
+                    sample_count=sample_count,
+                    args=args,
+                    observation_tracker=observation_tracker,
+                    latest_top_reading=latest_top_reading,
+                )
                 (
                     next_cluster_track_id,
                     active_clusters,
@@ -612,26 +619,19 @@ def monitor(args: argparse.Namespace) -> int:
                     strongest_incidents=strongest_incidents,
                 )
                 dashboard_state.update(
-                    updated_at=now.isoformat(timespec="seconds"),
-                    sample_count=sample_count,
-                    strongest=strongest,
-                    active_incidents=active_clusters,
-                    active_bins=candidate_bins,
-                    recent_events=list(recent_events),
-                    recent_observations=list(recent_observations),
-                    strongest_incidents=strongest_incidents,
-                    recent_peaks=recent_peaks_payload(recent_peaks, now),
-                    label_prompt=label_prompt,
-                    series=list(series),
-                    recent_peak={
-                        **recent_peak,
-                        "timestamp": recent_peak["timestamp"].isoformat(timespec="seconds"),
-                        "age_seconds": (now - recent_peak["timestamp"]).total_seconds(),
-                    }
-                    if recent_peak is not None
-                    else None,
-                    status="active" if active_clusters else "normal",
-                    message="Active incident" if active_clusters else "Monitoring",
+                    **dashboard_payload(
+                        now=now,
+                        sample_count=sample_count,
+                        strongest=strongest,
+                        active_clusters=active_clusters,
+                        candidate_bins=candidate_bins,
+                        recent_observations=recent_observations,
+                        strongest_incidents=strongest_incidents,
+                        recent_peaks=recent_peaks,
+                        label_prompt=label_prompt,
+                        series=series,
+                        recent_peak=recent_peak,
+                    )
                 )
 
                 if not args.quiet:
@@ -645,8 +645,6 @@ def monitor(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nStopping.")
     finally:
-        activity_fp.flush()
-        activity_fp.close()
         cluster_activity_fp.flush()
         cluster_activity_fp.close()
         readings_fp.flush()
