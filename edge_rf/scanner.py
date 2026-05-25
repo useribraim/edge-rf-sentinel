@@ -42,10 +42,13 @@ def parse_power_row(row: list[str]) -> list[tuple[int, float]]:
     if len(row) < 7:
         return []
 
-    start_hz = float(row[2])
-    stop_hz = float(row[3])
-    step_hz = float(row[4])
-    powers = [float(value) for value in row[6:] if value]
+    try:
+        start_hz = float(row[2])
+        stop_hz = float(row[3])
+        step_hz = float(row[4])
+        powers = [float(value) for value in row[6:] if value]
+    except ValueError:
+        return []
 
     if not powers:
         return []
@@ -72,12 +75,15 @@ def parse_frequency_value(value: str) -> float:
 
 
 def parse_range_spec(range_spec: str) -> tuple[int, int, int]:
-    start, stop, step = range_spec.split(":", 2)
-    return (
-        round(parse_frequency_value(start)),
-        round(parse_frequency_value(stop)),
-        round(parse_frequency_value(step)),
-    )
+    try:
+        start, stop, step = range_spec.split(":", 2)
+        return (
+            round(parse_frequency_value(start)),
+            round(parse_frequency_value(stop)),
+            round(parse_frequency_value(step)),
+        )
+    except ValueError as exc:
+        raise ValueError(f"invalid range spec: {range_spec}") from exc
 
 
 def demo_power_row(args: argparse.Namespace, sample_count: int) -> list[str]:

@@ -59,6 +59,33 @@ def count_strict_confirmed_incidents(cluster_path: Path) -> int:
         return sum(1 for row in csv.DictReader(fp) if row.get("event") == "start")
 
 
+def parse_rank1_row(row: dict[str, str]) -> dict[str, object] | None:
+    if row.get("rank") != "1":
+        return None
+    try:
+        parsed = dict(row)
+        parsed["dt"] = dt.datetime.fromisoformat(row["timestamp"])
+        parsed["sample"] = int(row["sample"])
+        parsed["power_db"] = float(row["power_db"])
+        parsed["baseline_db"] = float(row["baseline_db"])
+        parsed["delta_db"] = float(row["delta_db"])
+        parsed["frequency_mhz"] = float(row["frequency_mhz"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return parsed
+
+
+def parse_observation_row(row: dict[str, str]) -> dict[str, object] | None:
+    if not row.get("timestamp"):
+        return None
+    try:
+        parsed = dict(row)
+        parsed["dt"] = dt.datetime.fromisoformat(row["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return parsed
+
+
 def event_overlaps_intervals(
     event: dict[str, object],
     intervals: list[dict[str, object]],
@@ -527,16 +554,9 @@ def load_drive_analysis(
     rank1: list[dict[str, object]] = []
     with readings_path.open(newline="") as fp:
         for row in csv.DictReader(fp):
-            if row.get("rank") != "1":
-                continue
-            parsed = dict(row)
-            parsed["dt"] = dt.datetime.fromisoformat(row["timestamp"])
-            parsed["sample"] = int(row["sample"])
-            parsed["power_db"] = float(row["power_db"])
-            parsed["baseline_db"] = float(row["baseline_db"])
-            parsed["delta_db"] = float(row["delta_db"])
-            parsed["frequency_mhz"] = float(row["frequency_mhz"])
-            rank1.append(parsed)
+            parsed = parse_rank1_row(row)
+            if parsed is not None:
+                rank1.append(parsed)
 
     if not rank1:
         return {"ok": True, "empty": True, "message": "No readings yet"}
@@ -545,11 +565,9 @@ def load_drive_analysis(
     if observations_path.exists():
         with observations_path.open(newline="") as fp:
             for row in csv.DictReader(fp):
-                if not row.get("timestamp"):
-                    continue
-                parsed = dict(row)
-                parsed["dt"] = dt.datetime.fromisoformat(row["timestamp"])
-                observations.append(parsed)
+                parsed = parse_observation_row(row)
+                if parsed is not None:
+                    observations.append(parsed)
 
     intervals: list[dict[str, object]] = []
     open_intervals: dict[str, dict[str, object]] = {}

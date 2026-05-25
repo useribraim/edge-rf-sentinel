@@ -66,7 +66,10 @@ def main() -> int:
             continue
 
     for marker in observations:
-        marker_time = parse_time(marker["timestamp"])
+        try:
+            marker_time = parse_time(marker["timestamp"])
+        except (KeyError, ValueError):
+            continue
         start = marker_time - dt.timedelta(seconds=args.window_seconds)
         end = marker_time + dt.timedelta(seconds=args.window_seconds)
         nearby = [row for timestamp, row in parsed_readings if start <= timestamp <= end]
