@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from edge_rf.analysis import load_drive_analysis
@@ -47,6 +48,40 @@ from edge_rf.scanner import (
     start_rtl_power,
 )
 from edge_rf.tuning import TUNE_PROFILES, apply_tune
+
+
+@dataclass
+class MonitorRuntimeState:
+    baseline_samples: int
+    baselines: dict[int, deque[float]] = field(init=False)
+    sample_count: int = 0
+    cluster_tracks: dict[int, ClusterTrack] = field(default_factory=dict)
+    next_cluster_track_id: int = 1
+    recent_peak: dict[str, object] | None = None
+    recent_peaks: deque[dict[str, object]] = field(
+        default_factory=lambda: deque(maxlen=5)
+    )
+    latest_top_reading: dict[str, object] | None = None
+    series: deque[dict[str, object]] = field(default_factory=lambda: deque(maxlen=180))
+    strongest_incidents: list[dict[str, object]] = field(default_factory=list)
+    recent_observations: deque[dict[str, object]] = field(
+        default_factory=lambda: deque(maxlen=20)
+    )
+    observation_tracker: ObservationTracker = field(default_factory=ObservationTracker)
+
+    def __post_init__(self) -> None:
+        self.baselines = defaultdict(lambda: deque(maxlen=self.baseline_samples))
+
+    def reset_for_tune(self) -> None:
+        self.baselines.clear()
+        self.cluster_tracks.clear()
+        self.next_cluster_track_id = 1
+        self.sample_count = 0
+        self.recent_peak = None
+        self.recent_peaks.clear()
+        self.latest_top_reading = None
+        self.series.clear()
+        self.strongest_incidents.clear()
 
 
 def parse_args() -> argparse.Namespace:
@@ -402,10 +437,7 @@ def monitor(args: argparse.Namespace) -> int:
     if not args.demo:
         require_rtl_power()
 
-    baselines: dict[int, deque[float]] = defaultdict(
-        lambda: deque(maxlen=args.baseline_samples)
-    )
-    sample_count = 0
+    state = MonitorRuntimeState(args.baseline_samples)
     cluster_activity_path = Path(args.activity_log).with_name(
         f"{Path(args.activity_log).stem}_clusters.csv"
     )
@@ -416,33 +448,24 @@ def monitor(args: argparse.Namespace) -> int:
     observations_fp, observations_writer = open_observations_log(
         Path(args.observations_log)
     )
-    recent_observations: deque[dict[str, object]] = deque(maxlen=20)
-    series: deque[dict[str, object]] = deque(maxlen=180)
-    strongest_incidents: list[dict[str, object]] = []
-    cluster_tracks: dict[int, ClusterTrack] = {}
-    next_cluster_track_id = 1
-    recent_peak: dict[str, object] | None = None
-    recent_peaks: deque[dict[str, object]] = deque(maxlen=5)
-    latest_top_reading: dict[str, object] | None = None
     pending_tune: dict[str, str | None] = {"name": None}
     pending_tune_lock = threading.Lock()
-    observation_tracker = ObservationTracker()
 
     def mark_observation(label: str) -> dict[str, object]:
-        marker = observation_tracker.mark(
+        marker = state.observation_tracker.mark(
             label,
             signal_range=args.range,
-            sample_count=sample_count,
-            current_reading=latest_top_reading,
-            recent_peak=recent_peak,
+            sample_count=state.sample_count,
+            current_reading=state.latest_top_reading,
+            recent_peak=state.recent_peak,
         )
         observations_writer.writerow(marker)
         observations_fp.flush()
-        recent_observations.appendleft(marker)
+        state.recent_observations.appendleft(marker)
         dashboard_state.update(
-            recent_observations=list(recent_observations),
-            vehicle_interval_active=observation_tracker.vehicle_interval_active(),
-            vehicle_interval_started_at=observation_tracker.vehicle_interval_started_at(),
+            recent_observations=list(state.recent_observations),
+            vehicle_interval_active=state.observation_tracker.vehicle_interval_active(),
+            vehicle_interval_started_at=state.observation_tracker.vehicle_interval_started_at(),
         )
         print(f"MARK {marker['timestamp']} {marker['label']} {marker['event_type']}")
         return marker
@@ -520,15 +543,7 @@ def monitor(args: argparse.Namespace) -> int:
                 delete_temp_file(output_path)
 
                 apply_tune(args, tune_to_apply)
-                baselines.clear()
-                cluster_tracks.clear()
-                next_cluster_track_id = 1
-                sample_count = 0
-                recent_peak = None
-                recent_peaks.clear()
-                latest_top_reading = None
-                series.clear()
-                strongest_incidents.clear()
+                state.reset_for_tune()
 
                 output_path = new_power_output_path()
                 process = None if args.demo else start_rtl_power(args, output_path)
@@ -543,7 +558,7 @@ def monitor(args: argparse.Namespace) -> int:
                 continue
 
             if args.demo:
-                rows = [demo_power_row(args, sample_count)]
+                rows = [demo_power_row(args, state.sample_count)]
             else:
                 if not output_path.exists():
                     continue
@@ -562,12 +577,12 @@ def monitor(args: argparse.Namespace) -> int:
                 if not bins:
                     continue
 
-                sample_count += 1
+                state.sample_count += 1
                 now = dt.datetime.now().astimezone()
                 enriched, candidate_bins = build_readings(
                     bins=bins,
-                    baselines=baselines,
-                    sample_count=sample_count,
+                    baselines=state.baselines,
+                    sample_count=state.sample_count,
                     args=args,
                 )
 
@@ -576,14 +591,14 @@ def monitor(args: argparse.Namespace) -> int:
                     key=lambda item: float(item["power_db"]),
                     reverse=True,
                 )[: args.top]
-                latest_top_reading, recent_peak = update_signal_summary(
+                state.latest_top_reading, state.recent_peak = update_signal_summary(
                     strongest=strongest,
                     now=now,
-                    sample_count=sample_count,
+                    sample_count=state.sample_count,
                     warmup_samples=args.warmup_samples,
-                    recent_peak=recent_peak,
-                    recent_peaks=recent_peaks,
-                    series=series,
+                    recent_peak=state.recent_peak,
+                    recent_peaks=state.recent_peaks,
+                    series=state.series,
                 )
                 write_top_readings(
                     readings_writer=readings_writer,
@@ -591,7 +606,7 @@ def monitor(args: argparse.Namespace) -> int:
                     strongest=strongest,
                     candidate_bins=candidate_bins,
                     now=now,
-                    sample_count=sample_count,
+                    sample_count=state.sample_count,
                     args=args,
                 )
                 candidate_clusters = cluster_candidate_bins(
@@ -599,38 +614,38 @@ def monitor(args: argparse.Namespace) -> int:
                     args.cluster_khz * 1_000,
                 )
                 label_prompt = label_prompt_for(
-                    sample_count=sample_count,
+                    sample_count=state.sample_count,
                     args=args,
-                    observation_tracker=observation_tracker,
-                    latest_top_reading=latest_top_reading,
+                    observation_tracker=state.observation_tracker,
+                    latest_top_reading=state.latest_top_reading,
                 )
                 (
-                    next_cluster_track_id,
+                    state.next_cluster_track_id,
                     active_clusters,
-                    strongest_incidents,
+                    state.strongest_incidents,
                 ) = update_cluster_tracks(
-                    tracks=cluster_tracks,
+                    tracks=state.cluster_tracks,
                     candidate_clusters=candidate_clusters,
                     now=now,
                     args=args,
-                    next_track_id=next_cluster_track_id,
+                    next_track_id=state.next_cluster_track_id,
                     cluster_writer=cluster_activity_writer,
                     cluster_fp=cluster_activity_fp,
-                    strongest_incidents=strongest_incidents,
+                    strongest_incidents=state.strongest_incidents,
                 )
                 dashboard_state.update(
                     **dashboard_payload(
                         now=now,
-                        sample_count=sample_count,
+                        sample_count=state.sample_count,
                         strongest=strongest,
                         active_clusters=active_clusters,
                         candidate_bins=candidate_bins,
-                        recent_observations=recent_observations,
-                        strongest_incidents=strongest_incidents,
-                        recent_peaks=recent_peaks,
+                        recent_observations=state.recent_observations,
+                        strongest_incidents=state.strongest_incidents,
+                        recent_peaks=state.recent_peaks,
                         label_prompt=label_prompt,
-                        series=series,
-                        recent_peak=recent_peak,
+                        series=state.series,
+                        recent_peak=state.recent_peak,
                     )
                 )
 
