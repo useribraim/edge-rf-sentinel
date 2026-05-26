@@ -3,36 +3,7 @@
 from __future__ import annotations
 
 import csv
-import datetime as dt
 from pathlib import Path
-
-
-def open_activity_log(path: Path) -> tuple[object, csv.DictWriter]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    needs_header = not path.exists() or path.stat().st_size == 0
-    fp = path.open("a", newline="")
-    writer = csv.DictWriter(
-        fp,
-        fieldnames=[
-            "timestamp",
-            "event",
-            "frequency_hz",
-            "frequency_mhz",
-            "power_db",
-            "baseline_db",
-            "delta_db",
-            "threshold_db",
-            "incident_min_power_db",
-            "incident_start",
-            "incident_duration_seconds",
-            "peak_power_db",
-            "peak_delta_db",
-        ],
-    )
-    if needs_header:
-        writer.writeheader()
-        fp.flush()
-    return fp, writer
 
 
 def open_cluster_activity_log(path: Path) -> tuple[object, csv.DictWriter]:
@@ -134,40 +105,6 @@ def sanitize_label(label: str) -> str:
         elif char.isspace():
             cleaned.append("_")
     return "".join(cleaned)[:64] or "manual_marker"
-
-
-def write_activity(
-    writer: csv.DictWriter,
-    *,
-    event: str,
-    timestamp: dt.datetime,
-    freq_hz: int,
-    power_db: float,
-    baseline_db: float,
-    delta_db: float,
-    threshold_db: float,
-    incident_min_power_db: float,
-    incident_start: dt.datetime,
-    peak_power_db: float,
-    peak_delta_db: float,
-) -> None:
-    writer.writerow(
-        {
-            "timestamp": timestamp.isoformat(timespec="seconds"),
-            "event": event,
-            "frequency_hz": freq_hz,
-            "frequency_mhz": f"{freq_hz / 1_000_000:.6f}",
-            "power_db": f"{power_db:.2f}",
-            "baseline_db": f"{baseline_db:.2f}",
-            "delta_db": f"{delta_db:.2f}",
-            "threshold_db": f"{threshold_db:.2f}",
-            "incident_min_power_db": f"{incident_min_power_db:.2f}",
-            "incident_start": incident_start.isoformat(timespec="seconds"),
-            "incident_duration_seconds": f"{(timestamp - incident_start).total_seconds():.0f}",
-            "peak_power_db": f"{peak_power_db:.2f}",
-            "peak_delta_db": f"{peak_delta_db:.2f}",
-        }
-    )
 
 
 def write_cluster_activity(

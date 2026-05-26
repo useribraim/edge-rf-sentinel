@@ -33,7 +33,6 @@ new session directory under `logs/sessions/` and writes:
 
 ```text
 logs/sessions/<session_id>/readings.csv
-logs/sessions/<session_id>/activity.csv
 logs/sessions/<session_id>/activity_clusters.csv
 logs/sessions/<session_id>/observations.csv
 ```
@@ -49,7 +48,6 @@ per-session files:
 
 ```text
 logs/sessions/<session_id>/readings.csv
-logs/sessions/<session_id>/activity.csv
 logs/sessions/<session_id>/activity_clusters.csv
 logs/sessions/<session_id>/observations.csv
 ```
@@ -102,7 +100,7 @@ http://127.0.0.1:8765
 
 ## Logs
 
-The activity log records incident state transitions:
+The cluster activity log records incident state transitions:
 
 - `start`
 - `active`

@@ -29,7 +29,7 @@ rf_signal_monitor.py
         +--> edge_rf.csv_logs
         |        |
         |        v
-        |   readings.csv, activity.csv, activity_clusters.csv, observations.csv
+        |   readings.csv, activity_clusters.csv, observations.csv
         |
         +--> dashboard state
                  |
@@ -97,7 +97,6 @@ Responsibilities:
 
 - create CSV files with stable headers
 - write raw strongest-bin readings
-- write single-bin incident activity
 - write clustered incident activity
 - write manual observation labels
 - sanitize dashboard labels before logging
@@ -130,7 +129,6 @@ paths are provided.
 Important files:
 
 - `readings.csv`: strongest frequency bins from each scan row
-- `activity.csv`: single-bin incident starts, active samples, and ends
 - `activity_clusters.csv`: clustered incident starts, active samples, and ends
 - `observations.csv`: manual field labels such as "vehicle in sight"
 

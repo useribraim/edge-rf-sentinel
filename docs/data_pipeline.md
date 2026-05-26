@@ -57,7 +57,6 @@ later review.
 ```text
 logs/sessions/<session_id>/
         readings.csv
-        activity.csv
         activity_clusters.csv
         observations.csv
 ```
@@ -82,13 +81,6 @@ Key fields:
 - `threshold_db`
 - `incident_min_power_db`
 - `is_incident`
-
-### `activity.csv`
-
-Single-bin incident state changes.
-
-This is useful for debugging the original per-frequency threshold logic, but it
-can be noisy because one physical RF event may span multiple nearby bins.
 
 ### `activity_clusters.csv`
 

@@ -118,7 +118,6 @@ reduce per-frequency update rate.
 The monitor writes per-session CSV files:
 
 - `readings.csv`: strongest bins for every scan row
-- `activity.csv`: single-bin incident `start`, `active`, and `end` rows
 - `activity_clusters.csv`: clustered incident `start`, `active`, and `end` rows
 - `observations.csv`: manual field labels such as visible vehicle intervals
 
